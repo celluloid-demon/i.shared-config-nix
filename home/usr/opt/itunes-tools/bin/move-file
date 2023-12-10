@@ -1,0 +1,561 @@
+#!/bin/bash
+# Move a file or directory with the option to automatically rename it if an
+# identical file/directory is found in the destination. Batch control is best
+# handled by another script.
+
+# todo strange edge case where if you use -a, specify a file in ., and specify
+# '-o .' WITHOUT a trailing /, move-file thinks you want to rename it AS '.',
+# which it faithfully tries to do, which triggers an auto-rename, which
+# inadvertently makes it hidden (because now it's named '._1') - so for now,
+# trailing-slashes are important!!
+
+# ************************
+# *     START SCRIPT     *
+# ************************
+
+# Shell options
+set -e
+set -u
+set -o pipefail
+
+# Constants
+readonly GETOPTS_OPTSTRING=":ahi:o:v"
+readonly PROGNAME="${0##*/}"
+readonly ROOT_REQUIRED=false
+readonly SAVE_IFS="$IFS"
+readonly SCPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+readonly VERSION="1.0"
+
+main()
+{
+	watch_signals
+	confirm_root
+	get_options "$@"
+	exit_script
+}
+
+# Check for root EUID
+confirm_root()
+{
+	local _root_message
+
+	if [[ "$ROOT_REQUIRED" == true ]] && (( EUID != 0 )); then
+
+		_root_message="$(get_warning --page=ROOT)"
+
+		write_host --error="$_root_message"
+		exit_script --error
+
+	fi
+}
+
+# Exit
+exit_script()
+{
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		# Error exit
+		-e | --error )
+			invoke_cleanup
+			exit 1
+			;;
+
+		# Graceful exit
+		-g | --graceful )
+			invoke_cleanup
+			exit
+			;;
+
+		* )
+			write_host --error="Unknown option $i (${FUNCNAME[0]})"
+			invoke_cleanup
+			exit 1
+			;;
+
+	esac
+	done
+
+	# Default behavior (same as graceful exit) when run w/o options
+	invoke_cleanup
+	exit
+}
+
+# Help
+get_help()
+{
+	local _help_message
+	local _page_name
+
+	# Defaults
+	_help_message="$(read_help SHORT)"
+
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		# Display a help page
+		-p=* | --page=* )
+			_page_name="${i#*=}"
+			_help_message="$(read_help "$_page_name")"
+			;;
+
+		# Unknown option
+		* )
+			write_host --error="Unknown option $i (${FUNCNAME[0]})"
+			exit_script --error
+			;;
+
+	esac
+	done
+
+	echo "$_help_message"
+}
+
+# Parse command-line
+get_options()
+{
+	# Options
+	local _auto_rename
+	local _indir
+	local _infile
+	local _outdir
+	local _outfile
+	local _suffix
+
+	# Defaults
+	_auto_rename=false
+	_suffix="_1"
+
+	# Display help message and exit if no option specified
+	if [[ $# -eq 0 ]]; then
+
+		get_help
+		exit_script
+
+	fi
+
+	# With getops, invalid options don't stop the processing - if we want to
+	# stop the script, we have to do it ourselves (exit in the right place).
+	while getopts "$GETOPTS_OPTSTRING" i; do
+	case $i in
+
+		\? )
+			write_host --error="Invalid option: -$OPTARG"
+			exit_script --error
+			;;
+
+		: )
+			write_host --error="Option -$OPTARG requires an argument"
+			exit_script --error
+			;;
+
+	esac
+	done
+
+	# Reset getopts
+	OPTIND=1
+
+	# Get values
+	while getopts "$GETOPTS_OPTSTRING" i; do
+	case $i in
+
+		# Automatically rename infile/indir if identical file/directory found in destination
+		a )
+			_auto_rename=true
+			;;
+
+		# Infile/indir
+		i )
+			_indir="$(dirname "$OPTARG")"
+			_infile="$(basename "$OPTARG")"
+			;;
+
+		# Outdir/outfile
+		o )
+			# OPTARG is a pathname without a filename
+			if [[ "$OPTARG" == */ ]]; then
+
+				_outdir="$OPTARG"
+
+			# OPTARG is a filename with a pathname
+			else
+
+				_outdir="$(dirname "$OPTARG")"
+				_outfile="$(basename "$OPTARG")"
+
+			fi
+			;;
+
+	esac
+	done
+
+	# Reset getopts
+	OPTIND=1
+
+	# Parse options
+	while getopts "$GETOPTS_OPTSTRING" i; do
+	case $i in
+
+		# Help message
+		h )
+			get_help
+			;;
+
+		# Process infile/indir
+		i )
+			# todo if _inobj is a file (which you can test) and _outobj is a
+			# directory (again, which you can test), then attempt to move the
+			# infile INTO the outdir, rather than renaming the infile AS
+			# outdir (and coming up with a naming conflict)
+
+			# todo this is tarting to use more of a pathname-object architecture, isn't it? update vars accordingly
+			# Save and standardize in- and out- directories for comparison
+			_indir_standardized="$( cd "$( dirname "${_indir}/${_infile}" )" && pwd )"
+			_outdir_standardized="$( cd "$( dirname "${_outdir:?}/${_outfile:=$_infile}" )" && pwd )"
+
+			# echo "$_indir_standardized"
+			# echo "$_outdir_standardized"
+			# echo "$_auto_rename"
+
+			# Automatically rename (DO NOT rename if attempting to move a file
+			# in-place, however!)
+			if [[ "$_auto_rename" == true ]] && [[ "$_indir_standardized" != "$_outdir_standardized" ]]; then
+
+				# If proposed _outfile already exists in destination, append
+				# suffix (repeatedly) until _outfile is unique.
+
+				# Test if file with same name exists in destination
+				while [ -f "${_outdir:?}/${_outfile:=$_infile}" ]; do
+
+					_outfile="${_outfile%\.*}${_suffix}.${_outfile##*\.}"
+
+				done
+
+				# Test if directory with same name exists in destination
+				while [ -d "${_outdir:?}/${_outfile:=$_infile}" ]; do
+
+					_outfile="${_outfile}${_suffix}"
+
+				done
+
+			fi
+
+			# Move file/directory. Do not overwrite an existing
+			# file/directory. Show file/directory after it is moved. Do not do
+			# this if _outdir is null. Default _outfile to _infile if _outfile
+			# is null.
+			mv -n -v "${_indir}/${_infile}" "${_outdir:?}/${_outfile:=$_infile}"
+			;;
+
+		# Print version
+		v )
+			get_help --page=VERSION
+			;;
+
+	esac
+	done
+}
+
+# Handle trapped signals
+get_signals()
+{
+	# Exit on error if no option specified
+	if [[ $# -eq 0 ]]; then
+
+		write_host --error="Missing option (${FUNCNAME[0]})"
+		exit_script --error
+
+	fi
+
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		INT )
+			write_host --error="Program interrupted by user"
+			exit_script --error
+			;;
+
+		TERM )
+			write_host --error="Program terminated"
+			exit_script
+			;;
+
+		* )
+			write_host --error="Terminating on unknown signal"
+			exit_script --error
+			;;
+
+	esac
+	done
+}
+
+# Print warnings
+get_warning()
+{
+	local _page_name
+	local _warning_message
+
+	# Exit on error if no option specified
+	if [[ $# -eq 0 ]]; then
+
+		write_host --error="Missing option (${FUNCNAME[0]})"
+		exit_script --error
+
+	fi
+
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		# Display a specific warning
+		-p=* | --page=* )
+			_page_name="${i#*=}"
+			_warning_message="$(read_warning "$_page_name")"
+			;;
+
+		# Unknown option
+		* )
+			write_host --error="Unknown option $i (${FUNCNAME[0]})"
+			exit_script --error
+			;;
+
+	esac
+	done
+
+	echo "$_warning_message"
+}
+
+# Perform pre-exit housekeeping
+invoke_cleanup()
+{
+	return
+}
+
+# Help pages
+read_help()
+{
+# Exit on error if no option specified
+if [[ $# -eq 0 ]]; then
+
+	write_host --error="Missing option (${FUNCNAME[0]})"
+	exit_script --error
+
+fi
+
+# Split on $@ array instead of spaces
+for i; do
+case $i in
+
+# Default help message
+SHORT )
+echo """\
+$PROGNAME ver. $VERSION
+Move a file or directory with the option to automatically rename it if an
+identical file/directory is found in the destination. Batch control is best
+handled by another script.
+
+Usage: $PROGNAME [-ahv] -i [indir | infile] -o [outdir | outfile]
+
+Options:
+-a                 Automatically rename infile/indir if identical file/directory found in destination.
+-h                 Display this help message and exit.
+-i infile/indir    Infile/indir.
+-o outdir/outfile  Outdir/outfile (Outdirs are denoted by a trailing '/').
+-v                 Display version.
+"""
+
+# Append a note to the default help message if the script requires root
+# privileges.
+if [[ "$ROOT_REQUIRED" == true ]]; then
+	local _root_message
+
+	_root_message="$(get_warning --page=ROOT)"
+
+	echo "NOTE: $_root_message"
+fi
+;;
+
+# Display version
+VERSION )
+echo """\
+$VERSION
+"""
+;;
+
+# Unknown option
+* )
+write_host --error="Unknown option $i (${FUNCNAME[0]})"
+exit_script --error
+;;
+
+esac
+done
+}
+
+# Warning messages
+read_warning()
+{
+# Exit on error if no option specified
+if [[ $# -eq 0 ]]; then
+
+	write_host --error="Missing option (${FUNCNAME[0]})"
+	exit_script --error
+
+fi
+
+# Split on $@ array instead of spaces
+for i; do
+case $i in
+
+# Root required
+ROOT )
+echo """\
+You must be the superuser to run this script.
+"""
+;;
+
+# Unknown option
+* )
+write_host --error="Unknown option $i (${FUNCNAME[0]})"
+exit_script --error
+;;
+
+esac
+done
+}
+
+# Trap signals
+watch_signals()
+{
+	# trap "get_signals EXIT" EXIT
+	trap "get_signals TERM" TERM HUP
+	trap "get_signals INT" INT
+}
+
+# Write to stdout or stderr
+write_host()
+{
+	local _message
+	local _output
+	local _separator
+	local _stream
+	local _tag
+	local _tag_option_protected
+
+	# [ TAG > SEPARATOR > MSG ] = OUTPUT
+
+	# Defaults
+	_separator=": "
+	_stream=STDOUT
+	_tag_option_protected=false
+
+	# Error if no option specified
+	if [[ $# -eq 0 ]]; then
+
+		_tag="${PROGNAME} [error]"
+		_message="Missing option (${FUNCNAME[0]})"
+		_output="${_tag}${_separator}${_message}"
+		echo "$_output" >&2
+		exit_script --error
+
+		# Equivalent:
+		#   write_host --error="Missing option (${FUNCNAME[0]})"
+		#   exit_script --error
+
+	fi
+
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		# Debug message
+		-d=* | --debug=* )
+			# We always give the (optional) --no-tag option preferential
+			# treatment if it is explicitly used, whether it is used before or
+			# after this option.
+			if [[ "$_tag_option_protected" == false ]]; then
+
+				_tag="${PROGNAME} [debug]"
+
+			fi
+
+			_message="${i#*=}"
+			;;
+
+		# Error output. write_host can give you error messages for sorting
+		# convenience, but doing so WILL NOT RETURN AN ERROR EXIT CODE, since
+		# it is a successful operation. Thus, this should typically be
+		# invoked, then followed up by manually returning an error exit code.
+
+		# Example:
+		#   write_host --error="Unknown option $i (${FUNCNAME[0]})"
+		#   exit_script --error
+
+		-e=* | --error=* )
+			# We always give the (optional) --no-tag option preferential
+			# treatment if it is explicitly used, whether it is used before or
+			# after this option.
+			if [[ "$_tag_option_protected" == false ]]; then
+
+				_tag="${PROGNAME} [error]"
+
+			fi
+
+			_message="${i#*=}"
+			_stream=STDERR
+			;;
+
+		# Print messages without tag prefix
+		-n | --no-tag )
+			_tag=
+			_tag_option_protected=true
+			_separator=
+			;;
+
+		# Normal output
+		-o=* | --output=* )
+			# We always give the (optional) --no-tag option preferential
+			# treatment if it is explicitly used, whether it is used before or
+			# after this option.
+			if [[ "$_tag_option_protected" == false ]]; then
+
+				_tag="${PROGNAME}"
+
+			fi
+
+			_message="${i#*=}"
+			;;
+
+		# Unknown option
+		* )
+			_tag="${PROGNAME} [error]"
+			_message="Unknown option $i (${FUNCNAME[0]})"
+			_output="${_tag}${_separator}${_message}"
+			echo "$_output" >&2
+			exit_script --error
+			;;
+
+	esac
+	done
+
+	# Compose message
+	_output="${_tag}${_separator}${_message}"
+
+	# Write to stdout
+	if [[ "$_stream" == STDOUT ]]; then
+
+		echo "$_output"
+
+	# Write to stderr
+	elif [[ "$_stream" == STDERR ]]; then
+
+		echo "$_output" >&2
+
+	fi
+}
+
+# Main logic
+main "$@"

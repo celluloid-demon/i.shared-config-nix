@@ -1,0 +1,46 @@
+#!/bin/bash
+# ---------------------------------------------------------------------------
+# trim.sh - Trim a filesystem on a solid state drive.
+
+# This script trims TRIM_DIR, and writes LOGFILE to LOG_DIR.
+
+# Usage: trim.sh
+
+# Revision history:
+# 2015-01-12 Minor formatting corrections
+# 2014-05-01 Created
+# ---------------------------------------------------------------------------
+
+# Declare constants
+readonly ETC="$HOME/etc"
+readonly TRIM_DIR="/"
+readonly LIB="$HOME/lib"
+readonly LOG_DIR="/home/jonathan/var/log"
+readonly LOGFILE="trim.log"
+readonly UETC="$HOME/usr/etc"
+readonly ULIB="$HOME/usr/lib"
+
+# Source libraries
+source "$ULIB/stdutils.sh"
+
+# Define functions
+main() {
+  local err
+
+  hostlock
+  trim "$TRIM_DIR"
+  log "Filesystem trimmed."
+}
+
+trim() {
+  echo "Trimming the filesystem..."
+  fstrim "$1"
+}
+
+log() {
+  echo "$1"                                # Notify user
+  echo "$(date) $1" >> "$LOG_DIR/$LOGFILE" # Write log
+}
+
+# Main logic
+main

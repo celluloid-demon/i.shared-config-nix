@@ -1,0 +1,25 @@
+#!/bin/bash
+# ---------------------------------------------------------------------------
+# poop - Poops out a blank text file on the user's desktop.
+
+# Usage: poop
+
+# Revision history:
+# 2015-08-19 Created by Jonathan Dudrey
+# ---------------------------------------------------------------------------
+
+# Define functions
+main() {
+  local filename="poop.txt"
+
+  poop_file
+}
+
+poop_file() {
+  touch "$HOME/Desktop/$filename"
+
+  echo "Pooped a thing."
+}
+
+# Main logic
+main

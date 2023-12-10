@@ -1,0 +1,14 @@
+//  This is a script designed to run updates for the NS2 server "meatmarket" in the SteamCMD console.
+//  This is NOT Windows batch code! You cannot use it in Command Prompt!
+//  This is SteamCMD console syntax, not Command Prompt syntax.
+//
+//  Set this to 0 if updating multiple servers at once
+@ShutdownOnFailedCommand 1
+@NoPromptForPassword 1
+login kamonthequiet makomako06BonEigIn5
+//login anonymous
+force_install_dir ../ns2/meatmarket
+app_update 4940 validate
+//quit
+//  Run SteamCMD with the +runscript option. Example:
+//  steamcmd +runscript steamcmd-update-ns2-meatmarket.txt

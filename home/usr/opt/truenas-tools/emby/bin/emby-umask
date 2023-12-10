@@ -1,0 +1,28 @@
+#!/bin/sh
+
+# Proxy rc.d script to set custom umask
+
+# Was tired of having to manually fix permissions to get
+# rslsync and emby to both write to the same dataset.
+
+# To install this script, make it executable (755), then
+# copy or symlink it to:
+# /usr/local/opt/emby/bin/
+
+# Then change the command that /usr/local/etc/rc.d/emby
+# runs so that it points to this script:
+# #command="/usr/sbin/daemon"
+# command="/usr/local/opt/emby/bin/emby-umask"
+
+# The one quirk is that service(8) will no longer be able
+# to tell that emby is running - this is an accepted
+# limitation.
+
+# From the umask(2) man page: "Child processes inherit the
+# mask of the calling process." This mechanism is what
+# allows daemon(8) to pass its mask to the mono child
+# process (and thus EmbyServer.exe) when the -p <child
+# process PID filename> option is used.
+
+umask 002
+/usr/sbin/daemon "$@"

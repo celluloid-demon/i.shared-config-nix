@@ -1,0 +1,29 @@
+#!/bin/bash
+# ---------------------------------------------------------------------------
+# dummy - Dummy script for testing purposes.
+
+# Usage: dummy
+
+# Revision history:
+# 2015-02-22 Created
+# ---------------------------------------------------------------------------
+
+# Declare constants
+readonly LIB="$HOME/lib"
+readonly ULIB="$HOME/usr/lib"
+
+# Source libraries
+source "$ULIB/stdutils.sh"
+
+# Define functions
+main() {
+  greeting
+  do_thing
+}
+
+greeting() {
+  echo "This is a dummy script."
+}
+
+# Main logic
+main

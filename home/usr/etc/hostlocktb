@@ -1,0 +1,16 @@
+BAN
+passgen ban macbookpro.local
+scptgen ban win-7
+sunix ban win-7
+vboxstart ban win-7
+
+LOCK
+appify lock macbookpro.local
+breboot lock macbookpro.local
+cpumon lock antec
+dummy lock macbookpro.local
+mcsrv lock server-ubt
+movies lock macbookpro.local
+sysupkeep lock macbookpro.local
+trimfs lock antec
+xbrowse lock macbookpro.local

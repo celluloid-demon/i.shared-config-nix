@@ -1,0 +1,32 @@
+#!/bin/bash
+# ---------------------------------------------------------------------------
+# btsync-rescan - Gracefully kills btsync process and relaunches it, forcing
+# a folder rescan.
+
+# Usage: btsync-rescan
+
+# Revision history:
+#   2015-09-11 Created by Jonathan Dudrey
+# ---------------------------------------------------------------------------
+
+# Define functions
+main() {
+  local btsync="$HOME/local/btsync"
+
+  do_thing
+}
+
+do_thing() {
+  echo "Killing current btsync process..."
+  killall btsync
+  echo "Gracefully killed current btsync process..."
+  cd "$btsync"
+  echo "Waiting 5 seconds to avoid race condition with PID lockfile..."
+  sleep 5
+  echo "Attempting to relaunch btsync..."
+  ./start-btsync.sh
+  echo "Relaunched btsync."
+}
+
+# Main logic
+main

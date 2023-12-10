@@ -1,0 +1,29 @@
+#!/bin/bash
+# ---------------------------------------------------------------------------
+# apg.sh - Quickly generate hardened passwords.
+
+# Usage: apg.sh
+
+# Revision history:
+# 2014-02-03 Minor formatting corrections
+# 2015-01-21 Created by Jonathan Dudrey
+# ---------------------------------------------------------------------------
+
+# Declare constants
+readonly LIB="$HOME/lib"
+readonly ULIB="$HOME/usr/lib"
+
+# Source libraries
+source "$ULIB/stdutils.sh"
+
+# Define functions
+main() {
+  generate_passwords
+}
+
+generate_passwords() {
+  apg -st -n 10 -M SNCL
+}
+
+# Main logic
+main

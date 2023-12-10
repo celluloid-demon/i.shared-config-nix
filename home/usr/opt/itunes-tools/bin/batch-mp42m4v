@@ -1,0 +1,870 @@
+#!/bin/bash
+# Batch control for mp4-to-m4v.
+
+# ************************
+# *     START SCRIPT     *
+# ************************
+
+# Shell options
+set -e
+set -u
+set -o pipefail
+
+# Constants
+readonly GETOPTS_OPTSTRING=":hi:o:v"
+readonly PROGNAME="${0##*/}"
+readonly ROOT_REQUIRED=false
+readonly SAVE_IFS="$IFS"
+readonly SCPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+readonly VERSION="1.0"
+
+main()
+{
+	watch_signals
+	confirm_root
+	get_options "$@"
+	exit_script
+}
+
+is_os()
+{
+	local _uname_out
+	local _os
+
+	_uname_out="$(uname -s)"
+
+	case "$_uname_out" in
+
+		Darwin* )
+			_os="macos"
+			;;
+
+		Linux* )
+			_os="linux"
+			;;
+
+		* )
+			write_host --error="UNSUPPORTED OS: $_uname_out"
+			exit_script --error
+			;;
+
+	esac
+
+	# Return OS name
+	echo "$_os"
+}
+
+# Check for root EUID
+confirm_root()
+{
+	local _root_message
+
+	if [[ "$ROOT_REQUIRED" == true ]] && (( EUID != 0 )); then
+
+		_root_message="$(get_warning --page=ROOT)"
+
+		write_host --error="$_root_message"
+		exit_script --error
+
+	fi
+}
+
+# Exit
+exit_script()
+{
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		# Error exit
+		-e | --error )
+			invoke_cleanup
+			exit 1
+			;;
+
+		# Graceful exit
+		-g | --graceful )
+			invoke_cleanup
+			exit
+			;;
+
+		* )
+			write_host --error="Unknown option $i (${FUNCNAME[0]})"
+			invoke_cleanup
+			exit 1
+			;;
+
+	esac
+	done
+
+	# Default behavior (same as graceful exit) when run w/o options
+	invoke_cleanup
+	exit
+}
+
+# Help
+get_help()
+{
+	local _help_message
+	local _page_name
+
+	# Defaults
+	_help_message="$(read_help SHORT)"
+
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		# Display a help page
+		-p=* | --page=* )
+			_page_name="${i#*=}"
+			_help_message="$(read_help "$_page_name")"
+			;;
+
+		# Unknown option
+		* )
+			write_host --error="Unknown option $i (${FUNCNAME[0]})"
+			exit_script --error
+			;;
+
+	esac
+	done
+
+	echo "$_help_message"
+}
+
+# Parse command-line
+get_options()
+{
+	# Options
+	local _indir
+	local _outdir
+	local _outdir_option_protected
+
+	# Defaults
+	_indir="."
+	_outdir="$_indir"
+	_outdir_option_protected=false
+
+	# Display help message and exit if no option specified
+	if [[ $# -eq 0 ]]; then
+
+		get_help
+		exit_script
+
+	fi
+
+	# With getops, invalid options don't stop the processing - if we want to
+	# stop the script, we have to do it ourselves (exit in the right place).
+	while getopts "$GETOPTS_OPTSTRING" i; do
+	case $i in
+
+		\? )
+			write_host --error="Invalid option: -$OPTARG"
+			exit_script --error
+			;;
+
+		: )
+			write_host --error="Option -$OPTARG requires an argument"
+			exit_script --error
+			;;
+
+	esac
+	done
+
+	# Reset getopts
+	OPTIND=1
+
+	# Get values
+	while getopts "$GETOPTS_OPTSTRING" i; do
+	case $i in
+
+		# Indir
+		i )
+			_indir="$OPTARG"
+
+			# While _outdir is initially set to _indir by default, we always
+			# give the (optional) -o option preferential treatment if it is
+			# explicitly set, whether it is set before or after -i option.
+			if [[ "$_outdir_option_protected" == false ]]; then
+
+				_outdir="$_indir"
+
+			fi
+			;;
+
+		# Outdir
+		o )
+			_outdir="$OPTARG"
+			_outdir_option_protected=true
+			;;
+
+	esac
+	done
+
+	# Reset getopts
+	OPTIND=1
+
+	# Parse options
+	while getopts "$GETOPTS_OPTSTRING" i; do
+	case $i in
+
+		# Help message
+		h )
+			get_help
+			;;
+
+		# Process indir
+		i )
+			# Check if dependencies exist in PATH and are executable
+
+			# Dependencies: Main script
+			get_command --name="mp42m4v"	# Renames certain *.mp4 files to *.m4v. Used for compatibility with certain older Apple products, like older versions of AppleTV for example.
+
+			# Dependencies: mp4-to-m4v
+			get_command --name="ffprobe"	# Used for analyzing streams.
+			get_command --name="xmllint"	# via apt-get install libxml2-utils. Used for analyzing streams.
+
+			get_tree \
+				--scope="$_indir" \
+				--pattern='.*\.mp4$' \
+				--type=file \
+				--recursive \
+				--exclude-scope \
+				--execute="mp42m4v -i \"\$_hook_search_result\" -o \"$_outdir\"" # note how _hook_search_result is defered, outdir is immediately evauluated, and everything is quoted
+			;;
+
+		# Print version
+		v )
+			get_help --page=VERSION
+			;;
+
+	esac
+	done
+}
+
+# Check if command exists in PATH and is executable
+get_command()
+{
+	local _command_name
+
+	# Exit on error if no option specified
+	if [[ $# -eq 0 ]]; then
+
+		write_host --error="Missing option (${FUNCNAME[0]})"
+		exit_script --error
+
+	fi
+
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		# Command name
+		-n=* | --name=* )
+			_command_name="${i#*=}"
+			;;
+
+		# Unknown option
+		* )
+			write_host --error="Unknown option $i (${FUNCNAME[0]})"
+			exit_script --error
+			;;
+
+	esac
+	done
+
+	if ! [[ -x $(command -v "$_command_name") ]]; then
+
+		write_host --error="$_command_name not in PATH or not executable"
+		exit_script --error
+
+	fi
+}
+
+# Handle trapped signals
+get_signals()
+{
+	# Exit on error if no option specified
+	if [[ $# -eq 0 ]]; then
+
+		write_host --error="Missing option (${FUNCNAME[0]})"
+		exit_script --error
+
+	fi
+
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		INT )
+			write_host --error="Program interrupted by user"
+			exit_script --error
+			;;
+
+		TERM )
+			write_host --error="Program terminated"
+			exit_script
+			;;
+
+		* )
+			write_host --error="Terminating on unknown signal"
+			exit_script --error
+			;;
+
+	esac
+	done
+}
+
+# Search files
+get_tree()
+{
+	# *******************
+	# *     SUMMARY     *
+	# *******************
+
+	# get_tree crawls a hierarchy using a scope-pattern architecture to filter
+	# its results, and can optionally perform commands on the files it finds.
+	# This is designed to make batch-processing trivial.
+
+	# *****************
+	# *     USAGE     *
+	# *****************
+
+	# get_tree's --pattern option uses extended (modern) regular expressions
+	# (it does not support globular expressions).
+
+	# get_tree is powered by find, and find distinguishes between a working
+	# directory and a search pattern. get_tree reflects this as a "scope" and
+	# a "pattern." To find one or more files, the best practice is to specify
+	# the file's pathname (as a globular expression) in --scope and the
+	# filename itself (as an extended regex expression) in --pattern.
+
+	# ********************
+	# *     EXAMPLES     *
+	# ********************
+
+	# Example 1: Move all top-level files found in present working directory
+	# to _outdir. (Note how _hook_search_result is defered for get_tree to
+	# determine later, _outdir is evaluated immediately, and everything is
+	# quoted.)
+
+	#   $ get_tree --scope="." --pattern='.*' --execute="mv \"\${_hook_search_result}\" \"${_outdir}/\""
+
+	# Example 2: Transcode all files found in "MKVs" recursively and save them
+	# to _outdir. (Note how _hook_search_result is defered for get_tree to
+	# determine later, _outdir is evaluated immediately, and everything is
+	# quoted.)
+
+	#   $ get_tree --scope="MKVs" --pattern='.*' --recursive --execute="HandbrakeCLI -i \"\${_hook_search_result}\" -o \"${_outdir}/\""
+
+	# **************************
+	# *     START FUNCTION     *
+	# **************************
+
+	# Options
+	local _command_string
+	local _debug_mode
+	local _EXTENDED_REGEX_OPTION
+	local _hook_search_result_sanitized
+	local _input
+	local _keep_regex_primary_exclude_scope_updated
+	local _maxdepth_primary
+	local _path_operand
+	local _path_operand_sanitized
+	local _path_primary
+	local _PRINTZERO_PRIMARY
+	local _regex_primary_pattern
+	local _regex_primary_exclude_scope
+	local _regextype_positional_option
+	local _type
+	local _type_primary
+
+	# Hooks for external use
+	local _hook_search_result
+
+	# Defaults
+	_command_string="echo \"\$_hook_search_result\""	# Echo results by default
+	_debug_mode=false									# Debug information disabled by default
+
+	# _EXTENDED_REGEX_OPTION="-E"							# Hard-coded
+
+	local _os="$(is_os)"
+
+	# POSIX ERE (Extended Regular Expressions): OS is macOS
+	if [[ "$_os" == macos ]]; then
+
+		_EXTENDED_REGEX_OPTION="-E" # todo make this lower-case, it's a variable now
+		_regextype_positional_option= # unset regextype positional option on macOS
+
+	# POSIX ERE (Extended Regular Expressions): OS is Linux
+	elif [[ "$_os" == linux ]]; then
+
+		_EXTENDED_REGEX_OPTION= # unset extended (modern) regex option on Linux systems
+		# todo wait, is this form the form of a primary, rather than an
+		# option? position in command string might be different! it's not a
+		# primary, it's a "positional option," so maybe it's fine where it is.
+
+		_regextype_positional_option="-regextype posix-extended"
+
+	else
+
+		write_host --error="Unsupported OS (${FUNCNAME[0]})"
+		exit_script --error
+
+	fi
+
+	_keep_regex_primary_exclude_scope_updated=false		# 
+	_maxdepth_primary="-maxdepth 1"						# Non-recursive by default
+	_path_operand="."									# "Current tree" by default
+	_path_primary="! -path \"*/.*\""					# No hidden files or folders by default
+	_PRINTZERO_PRIMARY="-print0"						# Hard-coded
+	_regex_primary_pattern="-regex '.*'"				# All contents of tree by default
+	_regex_primary_exclude_scope=						# Include scope in search results by default
+	_type_primary=										# Return files and folders by default
+
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		# Display diagnostic information
+		-d | --debug )
+			_debug_mode=true
+			;;
+
+		# Command to execute on found file(s)
+		-e=* | --execute=* )
+			_command_string="${i#*=}"
+			;;
+
+		-E | --exclude-scope )
+			_regex_primary_exclude_scope="! -regex '^'\"$_path_operand\"'/*$'" # Tell find to exclude scope (top-most folder of hierarchy) from search results
+			# _exclude_scope=true
+			_keep_regex_primary_exclude_scope_updated=true
+			;;
+
+		# Search hidden files/folders
+		-h | --hidden )
+			_path_primary= # Tell find not to set the path primary
+			;;
+
+		# (Extended) Regex pattern
+		-p=* | --pattern=* )
+			_regex_primary_pattern="-regex '${i#*=}'" # Tell find what expression to use for -regex option
+			;;
+
+		# Recursive search
+		-r | --recursive )
+			_maxdepth_primary= # Tell find not to set a maximum depth
+			;;
+
+		# Hierarchy to crawl
+		-s=* | --scope=* )
+			_path_operand="${i#*=}" # Tell find what file hierarchy to walk
+
+			# Wildcards unsupported, as they make the find results harder to
+			# work with.
+			if [[ "$_path_operand" == *"*"* ]]; then
+
+				write_host --error="--scope: Wildcards unsupported, set scope to $(pwd) instead (${FUNCNAME[0]})"
+				exit_script --error
+
+			fi
+
+			# Update _regex_primary_exclude_scope with correct _path_operand
+			# (_exclude_scope is a flag to keep _regex_primary_exclude_scope
+			# updated anytime --scope is ran)
+			if [[ "$_keep_regex_primary_exclude_scope_updated" == true ]]; then
+
+				_regex_primary_exclude_scope="! -regex '^'\"$_path_operand\"'/*$'" # Tell find to exclude scope (top-most folder of hierarchy) from search results
+
+			fi
+			;;
+
+		# Type
+		-t=* | --type=* )
+			_type="${i#*=}"
+
+			# Type is file
+			if [[ "$_type" == file ]]; then
+
+				_type_primary="-type f" # Tell find what type to print
+
+			# Type is directory
+			elif [[ "$_type" == directory ]]; then
+
+				_type_primary="-type d" # Tell find what type to print
+
+			# Type is all (file and directory)
+			elif [[ "$_type" == all ]]; then
+
+				_type_primary= # Tell find not to set the type primary
+
+			# Unknown type
+			else
+
+				write_host --error="Unknown --type option argument $_type (${FUNCNAME[0]})"
+				exit_script --error
+
+			fi
+			;;
+
+		# Null operand (Edge-case if option string is passed in variable but
+		# variable is empty, prevents script from exiting on error)
+		'' )
+			local _do_nothing
+			;;
+
+		# Unknown option
+		* )
+			write_host --error="Unknown option $i (${FUNCNAME[0]})"
+			exit_script --error
+			;;
+
+	esac
+	done
+
+# Display diagnostic messages
+# todo update this w/ the TWO new extended regex option vars
+	if [[ "$_debug_mode" == true ]]; then
+
+write_host --no-tag --output="""\
+indir:                         $indir
+infile:                        $infile
+_EXTENDED_REGEX_OPTION:        $_EXTENDED_REGEX_OPTION
+_keep_regex_primary_exclude_scope_updated:
+                               $_keep_regex_primary_exclude_scope_updated
+_path_operand:                 $_path_operand
+_path_primary:                 $_path_primary
+_regex_primary_pattern:        $_regex_primary_pattern
+_regex_primary_exclude_scope:  $_regex_primary_exclude_scope
+_maxdepth_primary:             $_maxdepth_primary
+_type_primary:                 $_type_primary
+_PRINTZERO_PRIMARY:            $_PRINTZERO_PRIMARY
+"""
+
+	fi
+
+	# A note on attempting to save null bytes in strings in bash:
+
+	# Bash uses C-style strings internally, which are terminated by null
+	# bytes. This means that a Bash string (such as the value of a variable,
+	# or an argument to a command) can never actually contain a null byte.
+
+	# The read command can have -d $'\0'. This works, but only because -d ''
+	# also works! (That's not an explicitly documented feature of read, but I
+	# suppose it works for the same reason: '' is the empty string, so its
+	# terminating null byte comes immediately. -d delim is documented as using
+	# "The first character of delim", and I guess that even works if the
+	# "first character" is past the end of the string!)
+
+	# It is possible for a command to print out a null byte, and for that byte
+	# to be piped to another command that reads it as input. No part of that
+	# relies on storing a null byte in a string inside Bash. Another problem
+	# is that we can't use $'\0' in an argument to a command; echo
+	# "$file"$'\0' could happily print the null byte at the end, if only it
+	# knew that you wanted it to.
+
+	# https://unix.stackexchange.com/questions/174016/how-do-i-use-null-bytes-in-bash
+
+
+
+	# Search for file(s) or folder(s)
+
+	# Note the usage of -print0 in the find command, which uses NUL bytes as
+	# filename delimiters; and -d '' in the read command to instruct it to
+	# read all text into the file variable until it finds a NUL byte. By
+	# default, find and read delimit their input with newlines; however, since
+	# filenames can potentially contain newlines themselves, this default
+	# behaviour will split up those filenames at the newlines and cause the
+	# loop body to fail. Additionally it is necessary to set IFS to an empty
+	# string, because otherwise read would still strip leading and trailing
+	# whitespace. See FAQ #20 for more details.
+
+	# http://mywiki.wooledge.org/BashFAQ/001
+	eval find \
+		"$_EXTENDED_REGEX_OPTION" \
+		"$_path_operand" \
+		"$_path_primary" \
+		"$_regextype_positional_option" \
+		"$_regex_primary_pattern" \
+		"$_regex_primary_exclude_scope" \
+		"$_maxdepth_primary" \
+		"$_type_primary" \
+		"$_PRINTZERO_PRIMARY" |
+	(
+		# Run command on file(s) found
+		while IFS= read -r -d '' _hook_search_result; do
+
+			eval "$_command_string"
+
+		done
+
+		# Since IFS was set inside the subshell, we don't need to reset it
+		# once we exit the subshell.
+	)
+}
+
+# Print warnings
+get_warning()
+{
+	local _page_name
+	local _warning_message
+
+	# Exit on error if no option specified
+	if [[ $# -eq 0 ]]; then
+
+		write_host --error="Missing option (${FUNCNAME[0]})"
+		exit_script --error
+
+	fi
+
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		# Display a specific warning
+		-p=* | --page=* )
+			_page_name="${i#*=}"
+			_warning_message="$(read_warning "$_page_name")"
+			;;
+
+		# Unknown option
+		* )
+			write_host --error="Unknown option $i (${FUNCNAME[0]})"
+			exit_script --error
+			;;
+
+	esac
+	done
+
+	echo "$_warning_message"
+}
+
+# Perform pre-exit housekeeping
+invoke_cleanup()
+{
+	return
+}
+
+# Help pages
+read_help()
+{
+# Exit on error if no option specified
+if [[ $# -eq 0 ]]; then
+
+	write_host --error="Missing option (${FUNCNAME[0]})"
+	exit_script --error
+
+fi
+
+# Split on $@ array instead of spaces
+for i; do
+case $i in
+
+# Default help message
+SHORT )
+echo """\
+$PROGNAME ver. $VERSION
+Batch control for mp4-to-m4v.
+
+Usage: $PROGNAME [-hv] -i indir [-o outdir]
+
+Options:
+-h         Display this help message and exit.
+-i indir   Indir.
+-o outdir  Outdir (default: indir).
+-v         Display version.
+"""
+
+# Append a note to the default help message if the script requires root
+# privileges.
+if [[ "$ROOT_REQUIRED" == true ]]; then
+	local _root_message
+
+	_root_message="$(get_warning --page=ROOT)"
+
+	echo "NOTE: $_root_message"
+fi
+;;
+
+VERSION )
+echo """\
+$VERSION
+"""
+;;
+
+# Unknown option
+* )
+write_host --error="Unknown option $i (${FUNCNAME[0]})"
+exit_script --error
+;;
+
+esac
+done
+}
+
+# Warning messages
+read_warning()
+{
+# Exit on error if no option specified
+if [[ $# -eq 0 ]]; then
+
+	write_host --error="Missing option (${FUNCNAME[0]})"
+	exit_script --error
+
+fi
+
+# Split on $@ array instead of spaces
+for i; do
+case $i in
+
+# Root required
+ROOT )
+echo """\
+You must be the superuser to run this script.
+"""
+;;
+
+# Unknown option
+* )
+write_host --error="Unknown option $i (${FUNCNAME[0]})"
+exit_script --error
+;;
+
+esac
+done
+}
+
+# Trap signals
+watch_signals()
+{
+	# trap "get_signals EXIT" EXIT
+	trap "get_signals TERM" TERM HUP
+	trap "get_signals INT" INT
+}
+
+# Write to stdout or stderr
+write_host()
+{
+	local _message
+	local _output
+	local _separator
+	local _stream
+	local _tag
+	local _tag_option_protected
+
+	# [ TAG > SEPARATOR > MSG ] = OUTPUT
+
+	# Defaults
+	_separator=": "
+	_stream=STDOUT
+	_tag_option_protected=false
+
+	# Error if no option specified
+	if [[ $# -eq 0 ]]; then
+
+		_tag="${PROGNAME} [error]"
+		_message="Missing option (${FUNCNAME[0]})"
+		_output="${_tag}${_separator}${_message}"
+		echo "$_output" >&2
+		exit_script --error
+
+		# Equivalent:
+		#   write_host --error="Missing option (${FUNCNAME[0]})"
+		#   exit_script --error
+
+	fi
+
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		# Debug message
+		-d=* | --debug=* )
+			# We always give the (optional) --no-tag option preferential
+			# treatment if it is explicitly used, whether it is used before or
+			# after this option.
+			if [[ "$_tag_option_protected" == false ]]; then
+
+				_tag="${PROGNAME} [debug]"
+
+			fi
+
+			_message="${i#*=}"
+			;;
+
+		# Error output. write_host can give you error messages for sorting
+		# convenience, but doing so WILL NOT RETURN AN ERROR EXIT CODE, since
+		# it is a successful operation. Thus, this should typically be
+		# invoked, then followed up by manually returning an error exit code.
+
+		# Example:
+		#   write_host --error="Unknown option $i (${FUNCNAME[0]})"
+		#   exit_script --error
+
+		-e=* | --error=* )
+			# We always give the (optional) --no-tag option preferential
+			# treatment if it is explicitly used, whether it is used before or
+			# after this option.
+			if [[ "$_tag_option_protected" == false ]]; then
+
+				_tag="${PROGNAME} [error]"
+
+			fi
+
+			_message="${i#*=}"
+			_stream=STDERR
+			;;
+
+		# Print messages without tag prefix
+		-n | --no-tag )
+			_tag=
+			_tag_option_protected=true
+			_separator=
+			;;
+
+		# Normal output
+		-o=* | --output=* )
+			# We always give the (optional) --no-tag option preferential
+			# treatment if it is explicitly used, whether it is used before or
+			# after this option.
+			if [[ "$_tag_option_protected" == false ]]; then
+
+				_tag="${PROGNAME}"
+
+			fi
+
+			_message="${i#*=}"
+			;;
+
+		# Unknown option
+		* )
+			_tag="${PROGNAME} [error]"
+			_message="Unknown option $i (${FUNCNAME[0]})"
+			_output="${_tag}${_separator}${_message}"
+			echo "$_output" >&2
+			exit_script --error
+			;;
+
+	esac
+	done
+
+	# Compose message
+	_output="${_tag}${_separator}${_message}"
+
+	# Write to stdout
+	if [[ "$_stream" == STDOUT ]]; then
+
+		echo "$_output"
+
+	# Write to stderr
+	elif [[ "$_stream" == STDERR ]]; then
+
+		echo "$_output" >&2
+
+	fi
+}
+
+# Main logic
+main "$@"

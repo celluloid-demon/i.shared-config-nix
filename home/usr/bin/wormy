@@ -1,0 +1,134 @@
+#!/bin/sh
+# ---------------------------------------------------------------------------
+# wormy - Call and create rsync worms.
+
+# Carbon Copy Cloner:
+# Only accepts Shell scripts.
+
+# Usage: wormy [-h|--help] [-q|--quiet-mode job]
+
+# Revision history:
+# 2015-09-29 Created by Jonathan Dudrey
+# ---------------------------------------------------------------------------
+
+# Declare globals
+PROGNAME=${0##*/}
+VERSION="0.1"
+
+# Define functions
+main() {
+  local etc="$HOME/usr/etc"
+  local wormy_dir="$etc/wormy"
+  local whitelist_file="$wormy_dir/whitelist"
+  local whitelist_data=$(cat $whitelist_file)
+
+  # TODO: messing with arrays in shell is stupid. you might just want to
+  # structure your main logic in python first, embed shell/bash functionality
+  # in that as needed when asking for binaries, and make a shell wrapper
+  # script for that so that it's compatible with CCC. your script is large
+  # enough in scope that you should really think of using a proper programming
+  # language for it, anyway, so you might as well just go for it and do
+  # straight python.
+
+  echo "${whitelist_data[0]}"
+
+  ask_mdfind
+
+# start_backup "$target" "$destination"
+
+  graceful_exit
+}
+
+ask_mdfind() {
+# TODO: pull from ${whitelist}
+  local in_volume=("/Volumes/pandia/" "/")
+
+  mdfind "wormy" -onlyin "${in_volume[0]}" -name ".csv"
+
+# TODO: might want to move more complex python to separate .py files
+  python -c '''
+prompt = "> "
+print "Type a funny word:"
+answer = raw_input(prompt)
+print "Here is that word: %r" % answer
+
+print "Congratulations, you have embedded Python functionality in your Shell script!"
+  '''
+}
+
+start_backup() {
+  local target="./"
+  local destination="$HOME/Desktop/dummy/"
+
+  # comment-out dry run when configured
+  rsync -lHvrtpg --progress --delete --dry-run "$1" "$2"
+}
+
+clean_up() { # Perform pre-exit housekeeping
+  return
+}
+
+error_exit() {
+  echo -e "${PROGNAME}: ${1:-"Unknown Error"}" >&2
+  clean_up
+  exit 1
+}
+
+graceful_exit() {
+  clean_up
+  exit
+}
+
+signal_exit() { # Handle trapped signals
+  case $1 in
+    INT)
+      error_exit "Program interrupted by user" ;;
+    TERM)
+      echo -e "\n$PROGNAME: Program terminated" >&2
+      graceful_exit ;;
+    *)
+      error_exit "$PROGNAME: Terminating on unknown signal" ;;
+  esac
+}
+
+usage() {
+  echo "Usage: $PROGNAME [-h|--help] [-q|--quiet-mode job]"
+}
+
+help_message() {
+  cat <<- _EOF_
+  $PROGNAME ver. $VERSION
+  Call and create rsync worms.
+
+  $(usage)
+
+  Options:
+  -h, --help  Display this help message and exit.
+  -q, --quiet-mode Run this script in quiet mode, where 'job' is the wormy job.
+
+_EOF_
+  return
+}
+
+# Trap signals
+trap "signal_exit TERM" TERM HUP
+trap "signal_exit INT"  INT
+
+# Parse command-line
+while [[ -n $1 ]]; do
+  case $1 in
+    -h | --help)
+      help_message; graceful_exit ;; # hook for help message
+    -q | --quiet-mode)
+      echo "Quiet mode."; shift; job="$1" ;; # hook for quiet mode
+    -* | --*)
+      usage
+      error_exit "Unknown option $1" ;; # hook for option catch-all
+    *)
+      echo "Argument $1 to process..." ;; # hook for non-option catch-all
+  esac
+  shift
+done
+
+# Main logic
+main

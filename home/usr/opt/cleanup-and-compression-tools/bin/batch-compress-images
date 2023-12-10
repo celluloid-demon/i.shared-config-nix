@@ -1,0 +1,114 @@
+#!/bin/bash
+
+# Usage:
+# $ batch-compress-images.sh [indir]
+
+# Exit for any non-zero exit code
+set -e
+
+# Library location
+LIB="$HOME/usr/lib"
+
+# Source library files
+source "$LIB/sanitize_filename.sh"
+
+# Declare constants
+INDIR="${1:-$(pwd)}"
+BACKUP_DIR_BASE="$INDIR/_originals"
+backup_dir_root="$BACKUP_DIR_BASE"
+suffix=1
+while [[ -d "$backup_dir_root" ]]; do
+	backup_dir_root="${BACKUP_DIR_BASE}_${suffix}"
+	((suffix++))
+done
+BACKUP_DIR="$backup_dir_root/$(basename "$INDIR")"
+JPG_QUALITY=40
+USAGE_MSG="Usage: $ batch-compress-images.sh [indir]"
+
+# Main logic
+main() {
+
+	check_imagemagick_installed
+	check_directory_valid "$INDIR"
+	batch_compress_images "$INDIR"
+
+}
+
+# Ensure $indir is a directory
+check_directory_valid() {
+
+	if [ ! -d "$1" ]; then
+
+		echo "Directory argument is missing / invalid. Please provide a valid directory path."
+		echo "$USAGE_MSG"
+		exit 1
+
+	fi
+
+}
+
+# Check if imagemagick is installed
+check_imagemagick_installed() {
+
+	command -v convert >/dev/null 2>&1 || { echo >&2 "imagemagick is required but not installed. Aborting."; exit 1; }
+
+}
+
+batch_compress_images() {
+
+	local indir="$1" # we need a separate indir instance and can implement one by making it local for recursive calls to this function
+
+	# Iterate over all files (AND folders) in the given directory (recursively)
+	# for item in "$in"/*.png "$in"/*.jpeg "$in"/*.jpg "$in"/*.gif "$in"/*.bmp "$in"/*.tiff; do
+	for item in "$indir"/*; do
+
+		# Process file
+		if [[ -f "$item" ]]; then
+
+			# Test if the file is an image file, otherwise skip
+			if [[ $(file -b --mime-type "$item") =~ ^image/ ]]; then
+
+				# Create only if doesn't exist AND if there are image files to process
+				mkdir -p "$BACKUP_DIR"
+
+				# Create the image file's corresponding directory in the backup tree
+				local item_dir="${item%/*}"
+				local relative_dir="${item_dir#"$INDIR"}" # we want to strip dir from filesystem-root *only up to* top-level of indir WHEN IT WAS FIRST PASSED FROM THE COMMAND-LINE (read: local indir changes with each recursive call of this function, and cannot be relied on for this task)
+				local backup_dir="$BACKUP_DIR/$relative_dir"
+				mkdir -p "$backup_dir"
+
+				# Rename input file (sanitize) if necessary
+				item=$(sanitize_filename "$item")
+
+				# Temporarily move original-quality image file into working directory
+				local tmp="$indir/.tmp"
+				mkdir -p "$tmp"
+				mv "$item" "$tmp/"
+				item="$tmp/$(basename "$item")" # update location of item
+
+				# Compress and convert the image to JPG format
+				local out="$(dirname "$item")/$(basename "$item" | sed 's/\.[^.]*$/_smol.jpg/')"
+				echo "out: $out"
+				convert "$item" -quality $JPG_QUALITY "$out"
+
+				# Clean-up
+				mv "$out" "$tmp/../"
+				mv "$item" "$backup_dir/"
+				# mv "$item" "$(dirname "$item")/../" # testing
+				rmdir "$tmp"
+
+			fi
+
+		# Process directory (but skip if it's a backup dir or hidden dir)
+		elif [[ -d "$item" ]] && [[ "$item" != "$BACKUP_DIR_BASE"* ]] && [[ ! "$(basename "$item")" =~ ^\. ]]; then
+
+			batch_compress_images "$item"
+
+		fi
+
+	done
+
+}
+
+# Call the main logic
+main "$@"

@@ -1,0 +1,300 @@
+# Libraries
+source "${HOME}/usr/lib/utils"
+
+# 1. Prompt
+PS1='\e[0;32m\u@\h\e[m:\e[0;34m\w\e[m\$ ' # (user)@(host):(path)$
+export CLICOLOR=1
+export LSCOLORS=exfxcxdxbxegedabagacad
+
+# 2. Aliases
+source "${HOME}/.bash_aliases"
+
+# 3. Environment
+# Brew
+export PATH="/usr/local/sbin:$PATH"
+export PATH="/usr/local/bin:$PATH"
+
+# Brew: coreutils
+export PATH="/usr/local/opt/coreutils/libexec/gnubin:$PATH"
+MANPATH="/usr/local/opt/coreutils/libexec/gnuman:$MANPATH"
+
+# Brew: binutils
+export PATH="/usr/local/opt/binutils/bin:$PATH"
+MANPATH="/usr/local/opt/binutils/share/man:$MANPATH"
+
+# for compilers to find binutils
+export LDFLAGS="-L/usr/local/opt/binutils/lib"
+export CPPFLAGS="-I/usr/local/opt/binutils/include"
+
+# Brew: gnu-sed
+export PATH="/usr/local/opt/gnu-sed/libexec/gnubin:$PATH"
+MANPATH="/usr/local/opt/gnu-sed/libexec/gnuman:$MANPATH"
+
+# Brew: byobu
+export BYOBU_PREFIX=/usr/local
+MANPATH="/usr/local/opt/byobu/share/man:$MANPATH"
+
+# Brew: diffutils
+MANPATH="/usr/local/opt/diffutils/share/man:$MANPATH"
+
+# Brew: ed
+MANPATH="/usr/local/opt/ed/share/man:$MANPATH"
+
+# Brew: findutils
+export PATH="/usr/local/opt/findutils/libexec/gnubin:$PATH"
+MANPATH="/usr/local/opt/findutils/libexec/gnuman:$MANPATH"
+
+# Brew: gawk
+MANPATH="/usr/local/opt/gawk/libexec/gnuman:$MANPATH"
+
+# Brew: gnu-getopt
+export PATH="/usr/local/opt/gnu-getopt/bin:$PATH"
+MANPATH="/usr/local/opt/gnu-getopt/share/man:$MANPATH"
+
+# Brew: gnu-indent
+MANPATH="/usr/local/opt/gnu-indent/share/man:$MANPATH"
+
+# Brew: gnu-tar
+export PATH="/usr/local/opt/gnu-tar/libexec/gnubin:$PATH"
+MANPATH="/usr/local/opt/gnu-tar/libexec/gnuman:$MANPATH"
+
+# Brew: gnu-which
+MANPATH="/usr/local/opt/gnu-which/libexec/gnuman:$MANPATH"
+
+# Brew: gnutls
+MANPATH="/usr/local/opt/gnutls/share/man:$MANPATH"
+
+# Brew: grep
+export PATH="/usr/local/opt/grep/libexec/gnubin:$PATH"
+MANPATH="/usr/local/opt/grep/share/man:$MANPATH"
+
+# Brew: gzip
+MANPATH="/usr/local/opt/gzip/share/man:$MANPATH"
+
+# Brew: screen
+MANPATH="/usr/local/opt/screen/share/man:$MANPATH"
+
+# Brew: tmux
+MANPATH="/usr/local/opt/tmux/share/man:$MANPATH"
+
+# Brew: watch
+MANPATH="/usr/local/opt/watch/share/man:$MANPATH"
+
+# Brew: wdiff
+MANPATH="/usr/local/opt/wdiff/share/man:$MANPATH"
+
+# Brew: wget
+MANPATH="/usr/local/opt/wget/share/man:$MANPATH"
+
+# Brew: bash
+MANPATH="/usr/local/opt/bash/share/man:$MANPATH"
+
+# Brew: emacs
+MANPATH="/usr/local/opt/emacs/share/man:$MANPATH"
+
+# Brew: gdb
+MANPATH="/usr/local/opt/gdb/share/man:$MANPATH"
+
+# Brew: gpatch
+MANPATH="/usr/local/opt/gpatch/share/man:$MANPATH"
+
+# Brew: m4
+export PATH="/usr/local/opt/m4/bin:$PATH"
+MANPATH="/usr/local/opt/m4/share/man:$MANPATH"
+
+# Brew: make
+export PATH="/usr/local/opt/make/libexec/gnubin:$PATH"
+MANPATH="/usr/local/opt/make/libexec/gnuman:$MANPATH"
+
+# Brew: nano
+MANPATH="/usr/local/opt/nano/share/man:$MANPATH"
+
+# Brew: file-formula
+export PATH="/usr/local/opt/file-formula/bin:$PATH"
+MANPATH="/usr/local/opt/file-formula/share/man:$MANPATH"
+
+# Brew: git
+MANPATH="/usr/local/opt/git/share/man:$MANPATH"
+
+# Brew: less
+MANPATH="/usr/local/opt/less/share/man:$MANPATH"
+
+# Brew: openssh
+MANPATH="/usr/local/opt/openssh/share/man:$MANPATH"
+
+# Brew: perl@5.18
+export PATH="/usr/local/opt/perl@5.18/bin:$PATH"
+MANPATH="/usr/local/opt/perl@5.18/share/man:$MANPATH"
+
+# for compilers to find perl@5.18
+export LDFLAGS="-L/usr/local/opt/perl@5.18/lib"
+
+# Brew: perl
+export PATH="/usr/local/opt/perl/bin:$PATH"
+MANPATH="/usr/local/opt/perl/share/man:$MANPATH"
+
+# Brew: python (3)
+export PATH="/usr/local/opt/python/libexec/bin:$PATH"
+MANPATH="/usr/local/opt/python/share/man:$MANPATH"
+
+# Brew: rsync
+MANPATH="/usr/local/opt/rsync/share/man:$MANPATH"
+
+# Brew: ruby
+# Note: It is important to read Ruby's paths BEFORE Brew's paths! Brew first uses /usr/local for symlinks, but MacOS's default Ruby installation is already symlinked there, so we want to read our Brew-installed Ruby path before we read the Brew path.
+export PATH="/usr/local/opt/ruby/bin:$PATH"
+MANPATH="/usr/local/opt/ruby/share/man:$MANPATH"
+
+# Brew: Ruby Gems (v2.5.0)
+# This is where Brew's version of Ruby will install its gems.
+export PATH="/usr/local/lib/ruby/gems/2.5.0/bin:$PATH"
+
+# Brew: svn
+export PATH="/usr/local/opt/subversion/libexec:$PATH" # svntools
+MANPATH="/usr/local/opt/svn/share/man:$MANPATH"
+
+# Brew: unzip
+export PATH="/usr/local/opt/unzip/bin:$PATH"
+MANPATH="/usr/local/opt/unzip/share/man:$MANPATH"
+
+# Brew: vim
+MANPATH="/usr/local/opt/vim/share/man:$MANPATH"
+
+# Brew: zsh
+MANPATH="/usr/local/opt/zsh/share/man:$MANPATH"
+
+# Custom
+export PATH="${HOME}/usr/ker/xnu:${HOME}/ker/xnu:${HOME}/usr/bin:${HOME}/bin:$PATH"
+
+# VMWare Fusion
+export PATH="/Applications/VMware Fusion.app/Contents/Library:$PATH"
+
+# Maya 2015
+# export PATH="/Applications/Autodesk/maya2015/Maya.app/Contents/bin:/usr/aw/COM/bin:/usr/aw/COM/etc:$HOME/usr/ker/xnu:$HOME/ker/xnu:$HOME/usr/bin:$HOME/bin:$PATH"
+
+# Maya 2016 Ext 2 SP1
+# export PATH="/Applications/Autodesk/maya2016.5/Maya.app/Contents/bin:$PATH"
+
+# MakeMKV
+export PATH="/Applications/MakeMKV.app/Contents/MacOS:$PATH"
+
+# itunes-tools
+export PATH="${HOME}/usr/opt/itunes-tools/bin:$PATH"
+
+# Wine Prefix (32-Bit)
+# export WINEPREFIX="${HOME}/.wine"		# default prefix (32-bit)
+# export WINEPREFIX="${HOME}/.wine-dotnet4"	# .net4 used instead of wine-mono (32-bit)
+
+# Wine Prefix (64-Bit)
+export WINEPREFIX="${HOME}/.wine64-mono"		# attempt to satisfy windows apps w/ 64bit dependencies
+#export WINEARCH=win64
+
+# ffmpeg 2.8 (brew keg-only)
+export PATH="/usr/local/opt/ffmpeg@2.8/bin:$PATH"
+
+# 4. Functions
+
+# Print a splash image in the terminal on startup:
+# 
+# $ splash sans
+function list_splash
+{
+	local _splash_dir="${HOME}/usr/opt/splash"
+	local _img_dir="${_splash_dir}/img"
+
+	ls "${_img_dir}"
+}
+
+function show_splash
+{
+	local _splash_dir="${HOME}/usr/opt/splash"
+	local _img_dir="${_splash_dir}/img"
+
+	get_tree \
+		--scope="$_img_dir" \
+		--pattern='.*' \
+		--type=file \
+		--recursive \
+		--execute='cat $_hook_search_result 2>&1 </dev/null'
+}
+
+function splash
+{
+	local _splash_dir="${HOME}/usr/opt/splash"
+	local _img_dir="${_splash_dir}/img"
+	local _img="$1"
+
+	cat "${_img_dir}/${_img}"
+}
+
+# Change colors and fonts of the macOS terminal from the command line:
+# 
+# $ set_foreground_color lime green
+# $ set_font "Oxygen Mono" 12
+function list_colors
+{
+	cat "${HOME}/.colors.csv"
+}
+
+function grep_apple_color
+{
+	grep "$*" "${HOME}/.colors.csv"
+}
+
+function get_apple_color
+{
+	egrep "(^|,)$*(,|\t)" ${HOME}/.colors.csv | cut -f 6
+}
+
+function set_foreground_color
+{
+	color=$(get_apple_color $*)
+
+	if [ "$color" != "" ] ; then
+
+		osascript -e "tell application \"Terminal\" to set normal text color of window 1 to ${color}"
+
+		echo "Normal test color set to: $*: $color"
+
+	fi
+}    
+
+function set_background_color
+{
+    color=$(get_apple_color $*)
+
+	if [ "$color" != "" ] ; then
+
+		osascript -e "tell application \"Terminal\" to set background color of window 1 to ${color}"
+
+		echo "Background color set to: $*: $color"
+
+	fi
+}    
+
+function set_theme
+{
+	set_foreground_color $1
+	set_background_color $2
+}    
+
+function set_font
+{
+	osascript -e "tell application \"Terminal\" to set the font name of window 1 to \"$1\""
+	osascript -e "tell application \"Terminal\" to set the font size of window 1 to $2"
+}
+
+# 5. nvm
+clear
+
+echo "Loading nvm..."
+
+# Appended by https://raw.githubusercontent.com/creationix/nvm/v0.33.11/install.sh
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
+[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
+
+# 6. Cleanup
+clear
+
+# splash sans

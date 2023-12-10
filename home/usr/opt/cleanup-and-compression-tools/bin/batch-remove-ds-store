@@ -1,0 +1,42 @@
+#!/bin/bash
+
+# Usage:
+# $ batch-remove-ds-store [indir]
+
+# Exit for any non-zero exit code
+set -e
+
+# Declare constants
+INDIR="${1:-$(pwd)}"
+USAGE_MSG="Usage: $ batch-remove-ds-store [indir]"
+
+# Main logic
+main() {
+
+    check_directory_valid "$INDIR"
+    batch_remove_ds_store "$INDIR"
+
+}
+
+# Ensure $indir is a directory
+check_directory_valid() {
+
+    if [ ! -d "$1" ]; then
+
+        echo "Directory argument is missing / invalid. Please provide a valid directory path."
+        echo "$USAGE_MSG"
+        exit 1
+
+    fi
+
+}
+
+batch_remove_ds_store() {
+
+    # Find and remove .DS_Store files recursively within the directory
+    find "$1" -name ".DS_Store" -type f -delete -print
+
+}
+
+# Call the main logic
+main

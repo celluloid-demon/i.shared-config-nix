@@ -1,0 +1,53 @@
+#!/bin/bash
+# ---------------------------------------------------------------------------
+# x-browse.sh - Quickly navigate Xcode project directories.
+
+# Jonathan Dudrey
+
+# This script isn't intended to be run directly - you must source it. I
+# suggest setting an alias for it. This script navigates to
+# XCODE_DIR/XCODE_PROJECT, where XCODE_PROJECT is the argument.
+
+# By default, this script will simply switch to the Xcode directory.
+
+# Usage: x-browse.sh [project name]
+
+# Revision history:
+# 2015-02-03 Created
+# ---------------------------------------------------------------------------
+
+# Set variables
+readonly LIB="$HOME/lib"
+readonly ULIB="$HOME/usr/lib"
+readonly XCODE_DIR="$HOME/Xcode"
+readonly XCODE_PROJECT="$1"
+
+# For the purpose of having a tidy command prompt, for now, have XCODE_DIR
+# link to the symlink. Later, you can add an option to prefer a sym-linked
+# Xcode directory in $HOME, if found, but also include the full Xcode path for
+# searching. Hell, you can even make a table for this script to refer to when
+# browsing for Xcode projects across multiple Xcode version directories.
+
+# Source libraries
+source "$ULIB/stdutils.sh"
+
+# Define functions
+main() {
+  goto "$XCODE_DIR/$XCODE_PROJECT"
+# exec_bash
+}
+
+goto() {
+  cd "$1/$2"
+}
+
+exec_bash() {
+  # Start an interactive login shell after changing directories (defunct if the
+  # script is sourced as intended)
+
+  echo "Running in child process."
+  exec bash --login
+}
+
+# Main logic
+main

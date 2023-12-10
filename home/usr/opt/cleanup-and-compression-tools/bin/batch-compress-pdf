@@ -1,0 +1,149 @@
+#!/bin/bash
+
+# Usage:
+
+# $ batch-compress-pdf <indir>
+
+# Description:
+
+# Made this because I needed a way to review any and all ORIGINAL pdf's
+# compressed in a given tree (talking dozens of files spread through dozens of
+# levels in dozens of folders) - the review part is critical, because in testing
+# it was found that some PDF's were corrupted by the process or otherwise
+# unreadable. To make review easier (and compression non-destructive), the
+# COMPRESSED files are primarily generated in the backup dir, a perfect copy of
+# the target tree; this way, after manual review of the compressed PDF's that
+# are there (just a quick manual check to see if they're uncorrupted/still
+# readable), you can just delete the ones that don't render properly, leave the
+# rest in place, then use the follow-up helper script to move the remaining
+# "approved" files over to the corresponding source directories and overwrite
+# the originals.
+
+# - todo you should probably have additional logic to account for whether any
+# space was actually SAVED since in your tests sometimes the "compressed" pdf
+# was actually larger, so some follow-up logic to decide to actually move the
+# compressed version over to the review dir should ask if the new file is
+# actually smaller than the old file)
+
+# Exit for any non-zero exit code
+set -e
+
+# Library location
+LIB="$HOME/usr/lib"
+
+# Source library files
+source "$LIB/sanitize_filename.sh"
+
+# Declare constants
+INDIR="$1"
+MODE="screen" # default
+OUTDIR_BASE="$INDIR/_compressed"
+separator=""
+version=0
+suffix=""
+while [[ -d "${OUTDIR_BASE}" ]] || [[ -d "${OUTDIR_BASE}-${version}" ]]; do
+	separator="-"
+	((version++))
+	suffix="${separator}${version}"
+done
+OUTDIR="${OUTDIR_BASE}${suffix}/$(basename "$INDIR")"
+USAGE_MSG="Usage: $ batch-compress-pdf <indir>"
+
+# Other options for MODE:
+
+# -dPDFSETTINGS=/screen   # lower quality, smaller size.
+# -dPDFSETTINGS=/ebook    # for better quality, but slightly larger pdfs.
+# -dPDFSETTINGS=/prepress # output similar to Acrobat Distiller "Prepress Optimized" setting
+# -dPDFSETTINGS=/printer  # selects output similar to the Acrobat Distiller "Print Optimized" setting
+# -dPDFSETTINGS=/default
+
+# Main logic
+main() {
+
+	check_ghostscript_installed
+	check_directory_valid "$INDIR"
+	batch_compress_pdf "$INDIR"
+
+}
+
+batch_compress_pdf() {
+
+	# Create the output directory if it doesn't exist
+	mkdir -p "$OUTDIR"
+
+	local _indir="$1" # we need separated (local) indir instances for the recursive calls this function makes to itself
+
+	# <---------- BEGIN OLD CODE ---------->
+	# todo remove for testing
+	for file in "$INDIR"/*.pdf; do
+
+		filename=$(basename "$file") # strip full path from filename(.ext)
+		output_file="$OUTDIR/$filename"
+		gs -sDEVICE=pdfwrite -dCompatibilityLevel=1.4 -dPDFSETTINGS=/"$MODE" -dNOPAUSE -dQUIET -dBATCH -sOutputFile="$output_file" "$file"
+
+	done
+	# <---------- END OLD CODE ---------->
+
+	# Iterate over all files (AND folders) in the given directory (recursively)
+	for _item in "$_indir"/*; do
+
+		# Item is file (process it, or skip it if it is not a PDF file)
+		if [[ -f "$_item" ]] && [[ $(file -b --mime-type "$_item") =~ ^pdf/ ]]; then
+
+			# Create only if doesn't exist AND if there are pdf files to process
+			mkdir -p "$OUTDIR"
+
+			# Create the pdf file's corresponding directory in the new tree - we
+			# start by grabbing the FULL path of the current pdf file (sans
+			# filename itself)
+			local _source_dir="${_item%/*}"
+
+			# Next we want to strip dir /from/ filesystem-root *only /down/ to*
+			# top-level of *constant* $INDIR, /AS IN WHEN IT WAS FIRST PASSED
+			# FROM THE COMMAND-LINE/ (read: local $_indir changes with each
+			# recursive call of this function, and cannot be relied on for this
+			# task)
+			local _relative_dir="${_source_dir#"$INDIR"}"
+
+			# With the relative tree in-hand, we append it to $OUTDIR before
+			# creating the full destination tree for the current output
+			local _outdir="$OUTDIR/$_relative_dir"
+
+			# ...and make the directory-proper
+			mkdir -p "$_outdir"
+
+			# todo
+
+		# Item is directory (call function on it, or skip if it's a backup dir / hidden dir)
+		elif [[ -d "$_item" ]] && [[ "$_item" != "$OUTDIR_BASE"* ]] && [[ ! "$(basename "$_item")" =~ ^\. ]]; then
+
+			batch_compress_pdf "$_item"
+
+		fi
+
+	done
+
+}
+
+# Ensure $indir is a directory
+check_directory_valid() {
+
+	if [ ! -d "$1" ]; then
+
+		echo "Directory argument is missing / invalid. Please provide a valid directory path."
+		echo "$USAGE_MSG"
+		exit 1
+
+	fi
+
+}
+
+# Check if imagemagick is installed
+check_ghostscript_installed() {
+
+	command -v gs >/dev/null 2>&1 || { echo >&2 "Ghostscript is required but not installed. Aborting."; exit 1; }
+
+}
+
+# Call the main logic
+main "$@"

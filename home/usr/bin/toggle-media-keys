@@ -1,0 +1,21 @@
+#!/bin/bash
+# -----------------------------------------------------------------------------
+# toggle-media-keys - Toggle Mac media/function keys. This is a wrapper script
+# for the applescript toggle-media-keys.scpt.
+
+# Usage: toggle-media-keys
+
+# Revision history:
+# 2016-02-07 Created by Jonathan Dudrey
+# -----------------------------------------------------------------------------
+
+# Define functions
+main() {
+  local OPT="$HOME/opt"
+  local SCRIPT="toggle-media-keys.scpt"
+
+  osascript "$OPT/$SCRIPT"
+}
+
+# Main logic
+main

@@ -1,0 +1,22 @@
+#!/bin/sh
+
+# Proxy rc.d script to set custom umask
+
+# Was tired of having to manually fix permissions to get
+# rslsync and emby to both write to the same dataset.
+
+# To install this script, make it executable (755), then
+# copy or symlink it to:
+# /usr/local/opt/rslsync/bin/
+
+# Then change the command that /usr/local/etc/rc.d/rslsync
+# runs so that it points to this script:
+# #command="/usr/local/bin/rslsync"
+# command="/usr/local/opt/rslsync/bin/rslsync-umask.sh"
+
+# The one quirk is that service(8) will no longer be able
+# to tell that rslsync is running - this is an accepted
+# limitation.
+
+umask 002
+/usr/local/bin/rslsync "$@"

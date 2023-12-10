@@ -1,0 +1,14 @@
+#!/usr/bin/python
+# ----------------------------------------------------------------------------
+# dummy-py - Dummy script for testing.
+
+# Usage: python dummy-py
+
+# Release notes:
+# Python 2
+# ----------------------------------------------------------------------------
+
+from sys import argv
+from os.path import exists
+
+print "This is a (Python) dummy script."

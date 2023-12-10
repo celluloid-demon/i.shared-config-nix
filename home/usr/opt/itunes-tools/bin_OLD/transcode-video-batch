@@ -1,0 +1,1031 @@
+#!/bin/bash
+# Transcode video files and disc images to H265 Matroska files. In Batch Mode,
+# this script will resursively search for and process files in a folder tree.
+
+# todo IDEA, to solve your audio transcode/passthru decision-making problem,
+# you're trying to passthru everything, which is only a problem if the FIRST
+# track happens to not be stereo or mono (QT-compatible), and truth be told
+# most DVDs will have a main audio track in stereo anyway, so it'll be kind of
+# weird for the first track to be surround, WHICH MEANS you can count the
+# channels in the first track, make an educated guess and make a note of it to
+# flag the user - if the main audio track is surround, which will be pretty
+# unusual, assume that the other main language tracks are also in surround and
+# need stereo mixdowns - make a CRITICAL/WARNING note of it in your awk-
+# friendly log (and include the WARNING!!! in the batch process's final
+# summary output, too), so that if it *does* happen, it's immediately visible
+# to the user that a file needs attention, which should only rarely happen -
+# this way, the edge cases are caught and kept to a minimum, and are usually
+# resolved automatically.
+
+# also looks like there was a nifty node.js batch transcode wrapper script for
+# transcode_tools, but this batch script has a decision tree that dynamically
+# build option strings depending on the input file, you really need that.
+
+# yeah, for batch title processing, your script is still better than the
+# nodejs one - and that only works on batch transcode-video, you still want
+# batch control for convert-video, too
+
+# but the nodejs batch control script doesn't _want_ to be concerned w/ ISOs
+# anyway, it's just expecting 1 title in, 1 movie out - so if you can use a
+# separate batch control script JUST for splitting DVDs into separate MKVs,
+# then you're good! maybe use makemkv and your Xpath batch title counter for
+# this instead of Handbrake? technically, the transcode video and nodejs batch
+# control tools support ISOs, but they don't really know how to count and loop
+# through a variable number of titles for each infile, so that's better left
+# to a separate script (like this one). you can make this DVD-splitting part
+# of your transcode preparation process, using an example like the
+# following...
+
+# Example
+# Copy all titles from device and save as Matroska files, decrypting in
+# automation mode with progress output
+makemkvcon --decrypt --cache=16 --noscan --robot --progress=-same mkv disc:0 all c:\folder
+
+# also, separate batch control from the makemkvcon function itself?
+
+# also also, make separate wrapper scripts for makemkvcon and transcode-video
+# batch controls, respectively? you got batch control as a script w/ args, now
+# you can write wrappers for those w/ all of the option strings saved for
+# convenience
+
+# Workflow Outline:
+
+# your workflow so far has been to put files in - no matter what they are -
+# and turn them into h265 matroska files w/ AAC stereo
+
+# disc images > MKVs (easy to process, everything containerized in a single
+# file, 1 video stream per file)
+
+# titles > streams (1 video stream per file)
+
+# streams > 
+
+# todo yeah catch the handbrake exit code, if it's error then don't bother
+# with post-processing the audio streams via ffmpeg
+
+# Finish:
+
+# todo OH, your handbrake statements exit the script on error - won't that
+# unconditionally stop the batch process in the script on some ISOs w/ bad
+# titles? they do happen, so they should be allowed to go through w/ the
+# error.
+
+# todo you got the passthru thing down, that's good, now you gotta look at
+# your mkv's w/ ffprobe to see stereo tracks and make sure that they're all
+# standardized w/ the same codec (AAC) via ffmpeg... or roll that into the
+# same script here? nah, you're batch-processing DVD images, which handbrake
+# does well, but not so well that it's options are dynamic, so let handbrake
+# passthru everything and let ffmpeg look at actually encoding the audio
+# streams (maybe a post-processing thing w/ the DVD image step? can run a
+# post-processing step on ALL generated mkv's and make sure the audio is up to
+# snuff) - ultimately, it's a problem of not having a tool for analyzing the
+# number of channels for each audio track in a disc image (that's why you're
+# not using Handbrake to encode AAC, it applies the same setting to all found
+# audio tracks), but you can do that with an MKV file so let's just do that.
+
+# todo okay that's not true though, you CAN build a handbrake option string
+# based on the XML output that lsdvd gives you (it can report on channels)...
+
+# todo actually, why not separate the step of fully transcoding everything and
+# containerizing them as MKVs? let this script use handbrake/ffmpeg to convert
+# everything to passthru MKVs (or as passthru as they can be, given the tools
+# - handbrake cannot passthru video, which is fine for DVDs but not the
+# appropriate tool for video files), and another script to transcode those
+# MKVs to h265 videos with AAC 2-channel or passthru surround audio streams,
+# presto - everything's fully transcoded on the stream level. let another
+# script worry about making the video files Apple-compatible (NO transcode,
+# just a container conversion to mp4/mov, stripping of some elements like VOB
+# subs, making sure that the first audio stream is stereo AAC and that the
+# video stream has the correct apple-h265-compliant video tag if it's h265).
+
+# Ideas:
+
+# todo would be nice to specify which title you want to rip in File Mode -
+# could easily put together throw-away scripts to get those hard-to-encode DVD
+# images (particularly episodic content that may either be aligned against
+# titles OR chapters, not easy-to-detect)
+
+# todo when script is run w/o opts, it exits successfully, should change that
+# so that it exits on failure (example: when run w/o opts, print HELP page...
+# maybe a custom exit code or signal if no opts are run, and a trap that will
+# display the help message)
+
+# todo shellcheck is throwing red warnings at you for your quoted strings in
+# your for loops, which will 'loop' only once as a result (kinda useless for a
+# loop construct, isn't it?) - but you need to pass $opt quoted for your page
+# messages to work, so maybe the for loops were useful at one point in
+# development but are now deprecated
+
+# todo add a dry-run option to the script
+
+# todo add check for dependencies, exit on error if missing
+
+# todo prevent script from running if config file unspecified/missing (script
+# will attempt to initialize its own config file, but if destination is note
+# writable, user should know)
+
+# todo outdir defaults should change on-the-fly depending on OS
+
+# todo test if SCPTDIR or HOME/.convert-video is writable w/ test-write, if
+# exit code failure then exit on error, if exit code on success then write
+# awk-friendly ledger and use it for noting source files that have already
+# been processed (source files will not be moved, regardless of whether
+# they've been processed successfully, so running the script multiple times
+# without re-encoding the same source files twice would be nice - can not in
+# logfile that sourcefile was found, and has already been processed, and
+# skipping.) this should be a default mode that can be overridden w/ an option
+# to say "process ALL infiles, regardless of whether they've been processed
+# before."
+
+readonly PROGNAME="${0##*/}"
+readonly VERSION="0.1"
+readonly SCPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+readonly HANDBRAKEDIR="$HOME/BTSync/shared-config/assets/home/opt/HandBrakeCLI"
+
+readonly GETOPTS_OPTSTRING="c:Chi:I:m:o:p:x:"
+readonly ROOT_REQUIRED=false
+
+readonly ORIGINAL_IFS="$IFS"
+
+# todo does bash do enums?
+readonly FILE_MODE="FILE"
+readonly BATCH_MODE="BATCH"
+
+set -e
+
+config_dir="$SCPTDIR"
+config_file="transcode-video.config"
+
+preset_dir="$HANDBRAKEDIR/presets"
+preset_file=""
+preset=""
+
+indir="."
+outdir="$HOME/Desktop/$PROGNAME"
+ext="mkv" # switch this var to 'container' to be more useful?
+
+recursive=false
+dev=""
+
+mode="$FILE_MODE"
+
+main()
+{
+	watch_signals
+	confirm_root
+	get_options "$@"
+	exit_script
+}
+
+# Check for root EUID
+confirm_root()
+{
+	local root_message
+
+	if [[ "$ROOT_REQUIRED" == true ]] && (( EUID != 0 )); then
+
+		root_message="$(get_warning --page=ROOT)"
+
+		exit_script --error="$root_message"
+
+	fi
+}
+
+# Scan for spaces
+# todo deprecated?
+scan_for_spaces()
+{
+	local infile
+
+	# Scan recursively and exit on error to get user's attention if there are
+	# spaces in file/path names
+
+	# Pipes create subshells, which means we can't set global vars, but we can
+	# send exit codes. ALso note the (optional) parenthetical grouping, which
+	# makes it easier to see what's in the subshell.
+
+	# We temporarily use set -e because our error exit's message needs
+	# $infile, which is only set in the subshell, so this way we get $infile
+	# and exit the script properly instead of just exiting the subshell.
+	set -e # exit on error (set this OUTSIDE the subshell)
+
+	find "$indir" ! -path '*/.*' ! -name '.*' -type f -print0 |
+	(
+		while IFS= read -r -d '' infile; do
+
+			case "$infile" in
+
+				# Exit the script immediately
+				*\ * )
+					exit_script --error="File/pathname with spaces: $infile"
+					;;
+
+			esac
+
+		done
+	)
+
+	# Since IFS was set inside the subshell, we don't need to reset it once we
+	# exit the subshell.
+
+	set +e # disable exiting on error
+}
+
+# Do the other thing (File Mode)
+do_other_thing()
+{
+	local infile
+	local outfile
+#	local rawout
+#	local title_count_dvd
+#	local title_count_stream
+	local iso_tree
+	local bd_index
+	local bd_index_backup
+	local dvd_ifo
+	local dvd_ifo_backup
+	local dvd_contents
+	local title
+	local title_count
+	local title_list
+	local file_contents
+	local video_stream_count
+	local hevc_count
+	local ansi_count
+	local codec_name
+	local video_width
+	local video_height
+	local error_message
+
+	# todo echo dir creation if dir doesn't exit
+	mkdir -p "$outdir"
+
+	infile="$dev"
+
+	echo "Processing $infile..."
+	echo "Trying as an ISO image..."
+
+	set +e
+	iso_tree="$(isoinfo -i "$infile" -f)"
+	bd_index="$(echo "$iso_tree" | grep "BDMV/index.bdmv")"
+	bd_index_backup="$(echo "$iso_tree" | grep "BDMV/BACKUP/index.bdmv")"
+	dvd_ifo="$(echo "$iso_tree" | grep "VIDEO_TS/VIDEO_TS.IFO")"
+	dvd_ifo_backup="$(echo "$iso_tree" | grep "VIDEO_TS/VIDEO_TS.BUP")"
+	set -e
+
+	# ISO is BD image
+	if [[ $bd_index == *BDMV/index.bdmv* ]] || [[ $bd_index_backup == *BDMV/BACKUP/index.bdmv* ]]; then
+
+		echo "Blu Ray disc found, skipping (blu ray support not available)."
+
+	# ISO is DVD image
+	elif [[ $dvd_ifo == *VIDEO_TS/VIDEO_TS.IFO* ]] || [[ $dvd_ifo_backup == *VIDEO_TS/VIDEO_TS.BUP* ]]; then
+
+		echo "DVD found, transcoding."
+
+		preset_file="H.265_MKV_480pmax30_PASSTHRU_v1.json"
+		preset="H.265 MKV 480pmax30_PASSTHRU_v1"
+
+		dvd_contents="$(lsdvd -Ox "$infile")"
+		title_count=$(xmllint --xpath "string(lsdvd/track[last()]/ix)" - <<< "$dvd_contents")
+		title_list="$(seq "$title_count")"
+
+		for title in $title_list; do
+
+			outfile="$(basename "$infile")"
+			outfile="${outfile%\.*}_${title}.${ext}"
+
+			HandBrakeCLI -i "$infile" --title "$title" --preset-import-file "${preset_dir}/${preset_file}" --preset "$preset" -o "${outdir}/${outfile}" 2>&1 </dev/null
+
+		done
+
+	# Not an ISO
+	else
+
+		echo "Not an ISO image, trying as a video file..."
+
+		set +e
+		file_contents="$(ffprobe -loglevel error -show_format -show_streams -print_format xml "$infile")"
+		video_stream_count=$(xmllint --xpath "count(/ffprobe/streams/stream[@codec_type='video'])" - <<< "$file_contents")
+		set -e
+
+		# Video file (file with one video stream)
+		if (( video_stream_count == 1 )); then
+
+			hevc_count=$(xmllint --xpath "count(/ffprobe/streams/stream[@codec_name='hevc'])" - <<< "$file_contents")
+			ansi_count=$(xmllint --xpath "count(/ffprobe/streams/stream[@codec_name='ansi'])" - <<< "$file_contents") # protect against edge case of treating txt or srt files as ansi video
+			codec_name="$(xmllint --xpath "string(/ffprobe/streams/stream[@codec_type='video']/@codec_name)" - <<< "$file_contents")"
+
+			# H265 video
+			if (( hevc_count == 1 )); then
+
+				echo "Video found, converting container (source video stream codec type already hevc)."
+
+				outfile="$(basename "$infile")"
+				outfile="${outfile%\.*}.${ext}"
+
+				ffmpeg -i "$infile" -codec copy "${outdir}/${outfile}" 2>&1 </dev/null
+
+			# ANSI video
+			elif (( ansi_count == 1 )); then
+
+				# There's an odd edge case where *.txt files are detected
+				# as having ansi video streams by ffprobe.
+
+				echo "Video found, skipping (source video stream codec name: $codec_name)"
+
+			# Not H265 or ANSI video
+			else
+
+				echo "Video found, transcoding (source video stream codec name: $codec_name)."
+
+				title=1
+				outfile="$(basename "$infile")"
+				outfile="${outfile%\.*}.${ext}"
+
+				video_height=$(xmllint --xpath "string(/ffprobe/streams/stream[@codec_type='video']/@height)" - <<< "$file_contents")
+
+				# 480p Preset
+				if (( video_height <= 600 )); then
+
+					echo "Video height $video_height, using 480p Preset..."
+
+					preset_file="H.265_MKV_480pmax30_PASSTHRU_v1.json"
+					preset="H.265 MKV 480pmax30_PASSTHRU_v1"
+
+				# 720p Preset
+				elif (( video_height <= 900 )); then
+
+					echo "Video height $video_height, using 720p Preset..."
+
+					preset_file="H.265_MKV_720pmax30_PASSTHRU_v1.json"
+					preset="H.265 MKV 720pmax30_PASSTHRU_v1"
+
+				# 1080p Preset
+				elif (( video_height > 900 )); then
+
+					echo "Video height $video_height, using 1080p Preset..."
+
+					preset_file="H.265_MKV_1080pmax30_PASSTHRU_v1.json"
+					preset="H.265 MKV 1080pmax30_PASSTHRU_v1"
+
+				fi
+
+				HandBrakeCLI -i "$infile" --title "$title" --preset-import-file "${preset_dir}/${preset_file}" --preset "$preset" -o "${outdir}/${outfile}" 2>&1 </dev/null
+
+			fi
+
+		# Not a video file (file with more or less than one video stream)
+		else
+
+			echo "Not a video file (no suitable video stream detected)."
+
+		fi
+
+	fi
+
+	echo "Job done."
+	echo
+}
+
+# Do the thing (Batch Mode)
+do_thing()
+{
+	local infile
+	local outfile
+#	local rawout
+#	local title_count_dvd
+#	local title_count_stream
+	local iso_tree
+	local bd_index
+	local bd_index_backup
+	local dvd_ifo
+	local dvd_ifo_backup
+	local dvd_contents
+	local title
+	local title_count
+	local title_list
+	local file_contents
+	local video_stream_count
+	local hevc_count
+	local ansi_count
+	local codec_name
+	local video_width
+	local video_height
+	local error_message
+
+	# todo echo dir creation if dir doesn't exit
+	mkdir -p "$outdir"
+
+	# Note the usage of -print0 in the find command, which uses NUL bytes as
+	# filename delimiters; and -d '' in the read command to instruct it to
+	# read all text into the file variable until it finds a NUL byte. By
+	# default, find and read delimit their input with newlines; however, since
+	# filenames can potentially contain newlines themselves, this default
+	# behaviour will split up those filenames at the newlines and cause the
+	# loop body to fail. Additionally it is necessary to set IFS to an empty
+	# string, because otherwise read would still strip leading and trailing
+	# whitespace. See FAQ #20 for more details.
+
+	# http://mywiki.wooledge.org/BashFAQ/001
+
+	# Recursively search for files to process, ignoring hidden files and the
+	# contents of hidden directories (no more annoying .DS_Store messages)
+	find "$indir" ! -path '*/.*' ! -name '.*' -type f -print0 |
+	(
+		while IFS= read -r -d '' infile; do
+
+			echo "Processing $infile..."
+			echo "Trying as an ISO image..."
+
+			set +e
+			iso_tree="$(isoinfo -i "$infile" -f)"
+			bd_index="$(echo "$iso_tree" | grep "BDMV/index.bdmv")"
+			bd_index_backup="$(echo "$iso_tree" | grep "BDMV/BACKUP/index.bdmv")"
+			dvd_ifo="$(echo "$iso_tree" | grep "VIDEO_TS/VIDEO_TS.IFO")"
+			dvd_ifo_backup="$(echo "$iso_tree" | grep "VIDEO_TS/VIDEO_TS.BUP")"
+			set -e
+
+			# ISO is BD image
+			if [[ $bd_index == *BDMV/index.bdmv* ]] || [[ $bd_index_backup == *BDMV/BACKUP/index.bdmv* ]]; then
+
+				echo "Blu Ray disc found, skipping (blu ray support not available)."
+
+				# todo DON'T move image, do log note W/ NO ERROR EXIT (BD images unsupported)
+
+			# ISO is DVD image
+			elif [[ $dvd_ifo == *VIDEO_TS/VIDEO_TS.IFO* ]] || [[ $dvd_ifo_backup == *VIDEO_TS/VIDEO_TS.BUP* ]]; then
+
+				echo "DVD found, transcoding."
+
+				preset_file="H.265_MKV_480pmax30_PASSTHRU_v1.json"
+				preset="H.265 MKV 480pmax30_PASSTHRU_v1"
+
+				# Count titles by redirecting stderr. This method works with for
+				# loops, but breaks while loops by eating stdin.			
+				# rawout="$(HandBrakeCLI --min-duration 0 -i "$infile" --title 0 2>&1 >/dev/null)"
+
+				# It's worth noting that if you want the rawout + count values to be right,
+				# you'll need to pass --min-duration 0 to HandBrakeCLI, otherwise you'll come
+				# up short on some DVDs. For example, a test DVD can have a 10 second track 1
+				# that will be ignored in the final output.
+
+				# Count titles by redirecting stderr. The '</dev/null' statement
+				# has been changed to prevent HandbrakeCLI from eating the input
+				# and terminating the while loop after the first line.
+				# rawout="$(HandBrakeCLI --min-duration 0 -i "$infile" --title 0 2>&1 </dev/null)"
+
+				# Get DVD info. ffprobe reports streams, not titles, so ffprobe
+				# might give us a bad title count if we fed it a DVD image.
+				dvd_contents="$(lsdvd -Ox "$infile")" # output as XML, instead of default human-readable format
+
+				# Count titles with a here string, which just feeds a variable to
+				# the stdin of our command. xmllint can only accept reading from
+				# stdin with the '-' option.
+				title_count=$(xmllint --xpath "string(lsdvd/track[last()]/ix)" - <<< "$dvd_contents")
+
+				title_list="$(seq "$title_count")"
+
+				for title in $title_list; do
+
+					outfile="$(basename "$infile")"
+					outfile="${outfile%\.*}_${title}.${ext}"
+
+					# Note the redirect to prevent HandbrakeCLI from eating stdin
+					HandBrakeCLI -i "$infile" --title "$title" --preset-import-file "${preset_dir}/${preset_file}" --preset "$preset" -o "${outdir}/${outfile}" 2>&1 </dev/null
+
+					# todo store exit code of last handbrake call
+
+				done
+
+				# todo if handbrake's exit code is success, move source file to
+				# destination, else ignore source file and log error, noting bad
+				# file that needs attention
+
+			# Not an ISO
+			else
+
+				echo "Not an ISO image, trying as a video file..."
+
+				set +e
+
+				# Counting titles for a video file (typically there's only one)
+				# todo ask ffprobe, if infile has ONE video stream (parse ffprobe key-value pairs to count num of video-type streams, ask if equal to 1, then valid video file, then ask if the 1 video stream is h265, if not then encode, if yes then skip)
+				file_contents="$(ffprobe -loglevel error -show_format -show_streams -print_format xml "$infile")"
+
+				# Note the use of single-quotes for passing the attribute value.
+				# Double-quotes are valid, but do not evaluate correctly.
+				video_stream_count=$(xmllint --xpath "count(/ffprobe/streams/stream[@codec_type='video'])" - <<< "$file_contents")
+
+				set -e
+
+				# Video file (file with one video stream)
+				if (( video_stream_count == 1 )); then
+
+					hevc_count=$(xmllint --xpath "count(/ffprobe/streams/stream[@codec_name='hevc'])" - <<< "$file_contents")
+					ansi_count=$(xmllint --xpath "count(/ffprobe/streams/stream[@codec_name='ansi'])" - <<< "$file_contents")
+					codec_name="$(xmllint --xpath "string(/ffprobe/streams/stream[@codec_type='video']/@codec_name)" - <<< "$file_contents")"
+
+					# todo add edge case where you're dealing w/ a DVD/movie
+					# folder structure, w/ supporting files such as srt's and
+					# nfo's
+
+					# H265 video
+					if (( hevc_count == 1 )); then
+
+						# Passthru to fresh mkv container w/ ffmpeg
+
+						echo "Video found, converting container (source video stream codec type already hevc)."
+
+						outfile="$(basename "$infile")"
+						outfile="${outfile%\.*}.${ext}"
+
+						# Note the redirect to prevent ffmpeg from eating stdin
+						ffmpeg -i "$infile" -codec copy "${outdir}/${outfile}" 2>&1 </dev/null
+
+					# ANSI video
+					elif (( ansi_count == 1 )); then
+
+						# There's an odd edge case where *.txt files are detected
+						# as having ansi video streams by ffprobe.
+
+						echo "Video found, skipping (source video stream codec name: $codec_name)"
+
+					# Not H265 or ANSI video
+					else
+
+						echo "Video found, transcoding (source video stream codec name: $codec_name)."
+
+						# todo list some basic movie stats like height 'n junk
+
+						title=1
+						outfile="$(basename "$infile")"
+						outfile="${outfile%\.*}.${ext}"
+
+						video_height=$(xmllint --xpath "string(/ffprobe/streams/stream[@codec_type='video']/@height)" - <<< "$file_contents")
+
+						# 480p Preset
+						if (( video_height <= 600 )); then
+
+							echo "Video height $video_height, using 480p Preset..."
+
+							preset_file="H.265_MKV_480pmax30_PASSTHRU_v1.json"
+							preset="H.265 MKV 480pmax30_PASSTHRU_v1"
+
+						# 720p Preset
+						elif (( video_height <= 900 )); then
+
+							echo "Video height $video_height, using 720p Preset..."
+
+							preset_file="H.265_MKV_720pmax30_PASSTHRU_v1.json"
+							preset="H.265 MKV 720pmax30_PASSTHRU_v1"
+
+						# 1080p Preset
+						elif (( video_height > 900 )); then
+
+							echo "Video height $video_height, using 1080p Preset..."
+
+							preset_file="H.265_MKV_1080pmax30_PASSTHRU_v1.json"
+							preset="H.265 MKV 1080pmax30_PASSTHRU_v1"
+
+						fi
+
+						# Note the redirect to prevent HandbrakeCLI from eating stdin
+						HandBrakeCLI -i "$infile" --title "$title" --preset-import-file "${preset_dir}/${preset_file}" --preset "$preset" -o "${outdir}/${outfile}" 2>&1 </dev/null
+
+						# todo store exit code of last handbrake call, note bad
+						# file in awk-friendly log if exits on failure
+
+						# todo or, DON'T attempt to move any source files, whether
+						# or not they've been processed successfully - just note
+						# them in an awk-friendly logfile, and have this script
+						# scan the logfile before running to skip over any files
+						# that need attention, to avoid either encoding the same
+						# thing twice or to avoid encoding a previously-detected
+						# bad file.
+
+						# todo add a flush option to script that flushes awk-
+						# friendly log entries of previously processed or error'ed
+						# items, so that their flags are erased and they won't be
+						# skipped / can force the script to process them again
+
+					fi
+
+				# Not a video file (file with more or less than one video stream)
+				else
+
+					echo "Not a video file (no suitable video stream detected)."
+
+					# todo leave bad file alone and exit on error, log, noting bad file
+
+				fi
+
+			fi
+
+			# todo this would be an excellent place to put in a summary statement
+			# of what job was done, what was found, and what was done to it - a
+			# nice, small one-liner
+
+			echo "Job done."
+			echo
+
+		done
+	)
+	# Since IFS was set inside the subshell, we don't need to reset it once we
+	# exit the subshell.
+}
+
+# Exit
+exit_script()
+{
+	local opt
+	local error_message
+
+	opt="$@"
+
+	for i in "$opt"; do
+	case $i in
+
+		# Error exit
+		-e=* | --error=* )
+			error_message="${i#*=}"
+			echo -e "${PROGNAME}: $error_message" >&2
+			invoke_cleanup
+			exit 1
+			;;
+
+		# Graceful exit
+		* )
+			invoke_cleanup
+			exit
+			;;
+
+	esac
+	done
+}
+
+# Help
+get_help()
+{
+	local opt
+	local help_message
+	local page_name
+
+	opt="$@"
+
+	for i in "$opt"; do
+	case $i in
+
+		# Display a help page
+		-p=* | --page=* )
+			page_name="${i#*=}"
+
+			help_message="$(read_help $page_name)"
+			;;
+
+		# Default help message
+		* )
+			help_message="$(read_help SHORT)"
+			;;
+
+	esac
+	done
+
+	echo "$help_message"
+}
+
+# Parse command-line
+get_options()
+{
+	# With getops, invalid options don't stop the processing - if we want to
+	# stop the script, we have to do it ourselves (exit in the right place).
+	while getopts "$GETOPTS_OPTSTRING" i; do
+	case $i in
+
+		\? )
+			exit_script --error="Invalid option: -$OPTARG"
+			;;
+
+		: )
+			exit_script --error="Option -$OPTARG requires an argument"
+			;;
+
+	esac
+	done
+
+	# Reset getopts
+	OPTIND=1
+
+	# Get values
+	while getopts "$GETOPTS_OPTSTRING" i; do
+	case $i in
+
+		# Infile for File Mode. If an infile is specified, but Batch Mode is
+		# active, infile is ignored.
+		i )
+			dev="$OPTARG"
+			# recursive=false
+			;;
+
+		# Mode to run script in (FILE or BATCH, default: FILE)
+		m )
+			mode="$OPTARG"
+
+			# Exit on error if mode string invalid
+			if [[ "$mode" != "$FILE_MODE" ]] && [[ "$mode" != "$BATCH_MODE" ]]; then
+
+				exit_script --error="$mode not recognized, accepted mode strings are: $FILE_MODE, $BATCH_MODE"
+
+			fi
+			;;
+
+		# preset dir (todo preset_file deprecated, preset_dir still good)
+		p )
+			# preset_dir="$(dirname "$OPTARG")"
+			preset_dir="$OPTARG"
+			# preset_file="$(basename "$OPTARG")"
+			;;
+
+		# Indir for Batch Mode. If an indir is specified, but File Mode is
+		# active, indir is ignored.
+		I )
+			indir="$OPTARG"
+			;;
+
+		# outdir
+		o )
+			outdir="$OPTARG"
+			;;
+
+		# config file
+		c )
+			# todo if config file is set manually and doesn't exist, should exit on error
+			config_dir="$(dirname "$OPTARG")"
+			config_file="$(basename "$OPTARG")"
+			;;
+
+		# outfile extension
+		# todo this should set a container, not a 3-letter extension, since it
+		# will be interpreted as such by ffmpeg and handbrake
+		x )
+			ext="$OPTARG"
+			;;
+
+	esac
+	done
+
+	# Reset getopts
+	OPTIND=1
+
+	# Parse options
+	while getopts "$GETOPTS_OPTSTRING" i; do
+	case $i in
+
+		# Print sample config file
+		C )
+			get_help --page=CONFIG
+			;;
+
+		# Help message
+		h )
+			get_help
+			;;
+
+		# Start job
+		m )
+			# Batch Mode
+			if [[ "$mode" == "$BATCH_MODE" ]]; then
+
+				echo "Starting in Batch Mode."
+
+				do_thing # todo flesh this out more once the core functionality is working
+
+			# File Mode
+			elif [[ "$mode" == "$FILE_MODE" ]] && [[ "$dev" != "" ]]; then
+
+				echo "Starting in File Mode."
+
+				do_other_thing # todo flesh this out more once the core functionality is working
+
+			else
+
+				exit_script --error="File Mode: No file specified."
+
+			fi
+			;;
+
+	esac
+	done
+}
+
+# Handle trapped signals
+get_signals()
+{
+	local opt
+
+	opt="$@"
+
+	for i in "$opt"; do
+	case $i in
+
+		INT )
+			exit_script --error="Program interrupted by user"
+			;;
+
+		TERM )
+			echo -e "\n$PROGNAME: Program terminated" >&2
+			exit_script
+			;;
+
+		* )
+			exit_script --error="$PROGNAME: Terminating on unknown signal"
+			;;
+
+	esac
+	done
+}
+
+# Print warnings
+get_warning()
+{
+	local opt
+	local page_name
+	local warning_message
+
+	opt="$@"
+
+	for i in "$opt"; do
+	case $i in
+
+		# Display a specific warning
+		-p=* | --page=* )
+			page_name="${i#*=}"
+
+			warning_message="$(read_warning $page_name)"
+
+			# shift # past argument=value
+			;;
+
+		# Default warning message
+		* )
+			warning_message="$(read_warning SHORT)"
+
+			# shift # unknown option # todo do you really need the shift statements in your script?
+			;;
+
+	esac
+	done
+
+	echo "$warning_message"
+}
+
+# Perform pre-exit housekeeping
+invoke_cleanup()
+{
+	return
+}
+
+# Help pages
+read_help()
+{
+local opt
+
+opt="$@"
+
+for i in "$opt"; do
+case $i in
+
+# Sample config
+CONFIG )
+echo """\
+This is a sample config.
+"""
+;;
+
+# Default help message
+SHORT )
+echo """\
+$PROGNAME ver. $VERSION
+Run Handbrake recursively through a folder.
+
+This script transcodes video files and disc images to H265 Matroska files. In
+Batch Mode, it will resursively search for and process files in a folder tree.
+
+WARNING: Right now, DVD and BD folder structures are not supported - the
+script will detect them as normal files, and attempt to encode them as streams
+rather than BD/DVD titles. Everything else is fine.
+
+Dependencies:
+split-dvd
+  isoinfo (part of cdrtools)
+  lsdvd
+  xmllint (part of libxml2-utils)
+  ffprobe (part of ffmpeg)
+  makemkvcon
+
+batch-transcode-video
+  node.js
+  ruby
+  video_transcoding
+    ruby
+    HandbrakeCLI (via handbrake)
+    ffmpeg
+    mkvpropedit  (part of mkvtoolnix)
+    mp4track     (part of mp4v2)
+    mpv          (optional for crop-previewing)
+
+Usage: $PROGNAME -h
+Usage: $PROGNAME -C
+Usage: $PROGNAME -m FILE -i infile [-c config_file] [-o outdir] [-p preset_dir] [-x container_format]
+Usage: $PROGNAME -m BATCH -I indir [-c config_file] [-o outdir] [-p preset_dir] [-x container_format]
+
+Options:
+-h                   Display this help message and exit.
+-C                   Print sample config file.
+-c config_file       Run script with config file.
+-i infile            Image or file to transcode (in File Mode).
+-I indir             Directory to recursively process files (in Batch Mode).
+-m mode_string       Run script in desired mode.
+-o outdir            Directory to save output in.
+-p preset_dir        Handbrake preset directory.
+-x container_format  Three-letter extension to save output with.
+
+Mode Strings:
+FILE                 Run script on a single file.
+BATCH                Recursively search through a directory for files to batch-process.
+
+Supported container formats:
+mkv
+mp4
+"""
+
+# Append a note to the default help message if the script requires root
+# privileges.
+if [[ $ROOT_REQUIRED = true ]]; then
+	local root_message
+
+	root_message="$(get_warning --page=ROOT)"
+
+	echo "NOTE: $root_message"
+fi
+;;
+
+# Readme
+README )
+echo """\
+$PROGNAME ver. $VERSION
+
+This is a readme.
+"""
+;;
+
+# Missing page
+* )
+echo """\
+Unknown page
+"""
+;;
+
+esac
+done
+
+}
+
+# Warning messages
+read_warning()
+{
+local opt
+
+opt="$@"
+
+for i in "$opt"; do
+case $i in
+
+# Root required
+ROOT )
+echo """\
+You must be the superuser to run this script.
+"""
+;;
+
+# Missing page
+SHORT | * )
+echo """\
+Unknown warning
+"""
+;;
+
+esac
+done
+}
+
+# Trap signals
+watch_signals()
+{
+	# trap "get_signals EXIT" EXIT
+	trap "get_signals TERM" TERM HUP
+	trap "get_signals INT" INT
+}
+
+# Main logic
+main "$@"

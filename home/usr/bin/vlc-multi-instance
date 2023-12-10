@@ -1,0 +1,21 @@
+#!/bin/bash
+# ---------------------------------------------------------------------------
+# vlc-multi-instance - Launch multiple instances of VLC. This is a wrapper
+# script for the applescript vlc-multi-instance.scpt.
+
+# Usage: vlc-multi-instance
+
+# Revision history:
+# 2015-08-27 Created by Jonathan Dudrey
+# ---------------------------------------------------------------------------
+
+# Define functions
+main() {
+  local uopt="$HOME/usr/opt"
+  local script="vlc-multi-instance.scpt"
+
+  osascript "$uopt/$script"
+}
+
+# Main logic
+main

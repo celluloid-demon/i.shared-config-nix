@@ -1,0 +1,1128 @@
+#!/bin/bash
+
+# Intelligent wrapper for makemkvcon. Decrypt and copy all titles from ISO
+# device and save as Matroska files ("splitting" a given device into one or more
+# movie files, each with no more than one title, to facilitate sane
+# batch-transcoding later). Batch control is best handled by another script.
+
+# devsplit
+# dvdsplit
+# dsplit
+# dvdbdsplit
+
+# ********************
+# *     WISHLIST     *
+# ********************
+
+# skip/exit on error if would-be outfile already exists. ask if
+# infile w/ pathname, sans original extension, plus std title suffix (sans
+# title NUMBER), plus ANYTHING (*), plus ending .mkv ext, if yes for ANY
+# then exit script on error, saying that infile may have already been
+# processed, listing the potential conflicting files in outdir
+
+# todo it's in the name - this tool really only supports tools that specifically
+# diagnose ISO files, mebbe make a separate wrapper script as drivefssplit, with
+# matching batch-drivefssplit, named after the WSL drivefs filesystem type that
+# you can manually mount? or mebbe dirsplit and batch-dirsplit are simpler
+# names.
+
+# note that if you're using dd on windows to generate your ISO files in the
+# first place, you still need to feed dd a device name - NOT a folder path
+# (mount point), which is what a drive letter is! on windows, the device name /
+# device ID is a GUID, and windows does not assign GUIDs to partitions, but it
+# does assign GUIDs to volumes. the command line utility mountvol creates,
+# deletes, and lists a volume mount point - you can also use mountvol's output
+# to link volumes without requiring a drive letter (which is what dd needs). the
+# /L switch lists the mounted volume name for the specified directory.
+
+# Example for cdrom mounted as E:\:
+
+# $ mountvol E: /L
+
+# Example output:
+
+# $ \\?\Volume{d600a7bb-c604-11ea-9a29-283a4d0f731c}\
+
+# Note: The example output is displayed in the syntax dd needs, which is a GUID
+# (globally unique identifier) using windows' UNC-style path type. the curly
+# braces are required.
+
+# alternatively you can use wmi in powershell:
+
+# $ GWMI -namespace root\cimv2 -class win32_volume | FL -property DriveLetter, DeviceID
+
+# Example output:
+
+# $ DriveLetter : E:
+# $ DeviceID    : \\?\Volume{d600a7bb-c604-11ea-9a29-283a4d0f731c}\
+
+# Windows provides a number of ways to name a device. The --list will output the
+# preferred names. Under NT4, only the \\?\Device\Harddisk<n>\Partition<n>
+# method is available. Partition0 is the entire disk. Under Windows XP, some
+# partitions may not have a Volume device. In this case you can still use the
+# Harddisk<n>\Partition<n> name.
+
+# Windows 2000 and later have Volume devices which are unique GUIDs which
+# identify a disk or partition (what MS call a Volume). These are listed along
+# with any mount point that they may be mounted on. Most of the time this is a
+# drive letter but it may be a path on another filesystem. If you want to read
+# the underlying device, do not include the trailing \ character. If the volume
+# is not mounted there is no easy way to identify it so be careful. Under XP
+# SP2, many partitions can not be read directly, even if they are not in use.
+# There is a work around which I call reading partitions via the back door.
+
+# Example 1: Make an image of a floppy disk
+
+# $ dd if=\\.\a: of=c:\temp\disk1.img bs=1440k
+
+# Example 2: Write the image back to a floppy disk
+
+# $ dd if=c:\temp\disk1.img of=\\.\a: bs=1440k
+
+# Example 3: Rip an .iso from a CD
+
+# $ dd if=\\?\Device\CdRom0 of=c:\temp\disc1.iso bs=1M
+
+# Example 4: Read a partition from a USB memory device
+
+# $ dd if=\\.\Volume{c18588c0-02e9-11d8-853f-00902758442b} of=c:\temp\usb1.img bs=1M
+
+# Example 5: Read the entire USB memory device
+
+# $ dd if=\\?\Device\Harddisk1\Partition0 of=c:\temp\usb2.img bs=1M --size --progress
+
+# Personal examples:
+
+# $ dd if=\\?\Device\CdRom0 of=d:\users\jonat\desktop\disc0.iso bs=1M --progress
+
+# $ dd if=\\?\Device\CdRom0 of=d:\users\jonat\desktop\disc0.iso status=progress
+
+# You can write to any file or block device which windows will allow you to
+# write to. You can use the standard \\.\ notation for win32 exported devices or
+# the dd specific \\?\ notation to access windows native devices.
+
+# The default block size is 512 which will work for most files and devices but
+# the copy will be a lot faster if you use a larger block size. For example a
+# floppy disk read with bs=1k count=1440 takes almost twice as long than if you
+# use bs=1440k count=1. Don't make the block size too large because windows will
+# run out of memory. 1M is probably a good size and upper limit. Most CD/DVDs
+# have a 2k sector size and probably will not work with a block size which is
+# not a multiple of that.
+
+# Note: You can not write to a CD with this program. Get microsoft cdburn from
+# the windows XP resource kit.
+
+# Note: Floppy disks are extremely unreliable. If you get errors, please try
+# another floppy disk or reformatting the disk.
+
+# todo you should really have a separate dd wrapper that functions more as a dd
+# helper script that explains this stuff
+
+# you know at the end of the day, it solves a lot of problems of needing
+# low-level access to your device by just immediately ripping to MKV files as
+# your backup instead of ISOs, which only requires access to the  require access to the underlying device
+
+# actually, technically you could use dd on windows, which would make dd a
+# portable solution, but really the problem is that dd is a general purpose
+# tool; makemkv is purpose-built. you don't WANT encrypted bitwise ISO files
+# from dd (video on protected discs get corrupted anyway), so you should have
+# been using makemkv to create MKVs as your decrupted backup archival files the
+# whole time. makemkv is the standard. plus, you know, you can really just
+# reconstruct ISO files from your decrypted MKVs anyway if you really want to.
+# ripping to ISO isn't the main goal; decrypting is, and you've been decrypting
+# on-the-fly with MDRP when making your initial ISO files this whole time, so
+# why not with makemkv? ...so ye, you're seeking to eliminate ISOs from your
+# workflow entirely, which means this script needs to pivot its main focus
+# toward splitting both discs AND disc images. it shouldn't care which it's
+# dealing with - you don't want it to. MKVs should honestly be preferred because
+# they're archival AND portable.
+
+# well... ok. you would never work with physical disks in a batch fashion, and
+# this is written specifically for batch processing many ISO files at once, so
+# really your use case for the GUI version of makemkv is the 'one (physical)
+# disk at a time' workflow, which doesn't NEED a script to consider it, and your
+# use case for tons of ISOs you've been archiving wouldn't be anything other
+# than a batch process, which SOLELY MERITS a scripted solution. so yeah, the
+# name "isosplit" can stay. :)
+
+# Does this script process physical disks?
+
+# It can, but do you want it to? If you have an optical disk drive, chances are
+# you have a monitor too, which means you can use the GUI version of MakeMKV.
+# Chances also are that you don't have more than one optical drive plugged in,
+# so with no batch-processing, what's the point of a script? Just use the GUI
+# for physical disks that you're processing one at a time, and the script for
+# all virtual media (where there's actually a chance in hell you'll be
+# processing more than one device at a time, where batch processing via a script
+# would be advantageous over the GUI version).
+
+# well, shit, there is one thing that the ISOs provide... the DVD menu. there's
+# original information about what the titles are named and how they're organized
+# that gets lost when splitting the source disk.
+
+# but then... MKVs take up less space than MakeMKV's "backup" option (where an
+# entire ISO file is generated).
+
+# tho... the script does handle automatic renaming for you, that's a boon. A LOT
+# of tedious manual renaming of files is handled for you.
+
+# ************************
+# *     START SCRIPT     *
+# ************************
+
+# Shell options
+set -e
+set -u
+set -o pipefail
+
+# Constants
+readonly GETOPTS_OPTSTRING=":hi:n:o:t:v"
+readonly PROGNAME="${0##*/}"
+readonly ROOT_REQUIRED=false
+readonly SAVE_IFS="$IFS"
+readonly SCPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+readonly VERSION="1.0"
+
+# SPECIAL CONSTANTS
+
+# (I thought I could just redirect makemkvcon to makemkvcon.exe on WSL with an
+# alias from a script, but we can't have nice things.)
+
+# If makemkvcon exists (*nix), set to makemkvcon
+if [[ -x $(command -v "makemkvcon") ]]; then
+
+	readonly MAKEMKVCON="makemkvcon"
+
+# If makemkvcon.exe exists (WSL), set to makemkvcon.exe
+elif [[ -x $(command -v "makemkvcon.exe") ]]; then
+
+	readonly MAKEMKVCON="makemkvcon.exe"
+
+# No executable found
+else
+
+	write_host --error="Makemkvcon not found (is it in your path?)."
+	exit_script --error
+
+fi
+
+main()
+{
+	watch_signals
+	confirm_root
+	get_options "$@"
+	exit_script
+}
+
+# Check for root EUID
+confirm_root()
+{
+	local _root_message
+
+	if [[ "$ROOT_REQUIRED" == true ]] && (( EUID != 0 )); then
+
+		_root_message="$(get_warning --page=ROOT)"
+
+		write_host --error="$_root_message"
+		exit_script --error
+
+	fi
+}
+
+# convertfrom_iso only supports converting Blu-ray and DVD images (saved as
+# ISO files) into one or more Matroska files
+convertto_mkv()
+{
+	local _bd_index
+	local _bd_index_backup
+	local _cache_size
+	local _basename
+	local _dvd_ifo
+	local _dvd_ifo_backup
+	local _infile
+	local _mkv_command_source_parameter
+	local _outdir
+	local _outfile
+	local _source_tree
+	local _source_type
+	local _tmpdir
+	local _tmpdir_original
+	local _tmpfile
+
+	# Defaults
+	_basename="cdrom"					# used only in disc mode
+
+	# Exit on error if no option specified
+	if [[ $# -eq 0 ]]; then
+
+		write_host --error="Missing option (${FUNCNAME[0]})"
+		exit_script --error
+
+	fi
+
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		# Infile
+		-i=* | --infile=* )
+			_infile="${i#*=}"
+			;;
+
+		# Outdir
+		-o=* | --outdir=* )
+			_outdir="${i#*=}"
+			;;
+
+		# Basename (used only for disc mode)
+		-n=* | --basename=* )
+			_basename="${i#*=}"
+			;;
+
+		# Source type
+		-t=* | --type=* )
+			_source_type="${i#*=}"
+			;;
+
+		# Null operand (Edge-case if option string is passed in variable but
+		# variable is empty, prevents script from exiting on error)
+		'' )
+			local _do_nothing
+			;;
+
+		# Unknown option
+		* )
+			write_host --error="Unknown option $i (${FUNCNAME[0]})"
+			exit_script --error
+			;;
+
+	esac
+	done
+
+	# Source type is disc drive (works on Linux, macOS and WSL)
+	if [[ "$_source_type" == disc ]]; then
+
+		write_host --output="Processing $_source_type..."
+
+		# todo if <os> then...
+
+		# Disk drive is mounted on Linux
+		# _mkv_command_source_parameter="dev:/dev/cdrom"
+
+		# Disk drive is mounted on macOS
+		# _mkv_command_source_parameter=""
+
+		# Disk drive is mounted on Windows (WSL)
+		_mkv_command_source_parameter="disc:0"
+
+		set +e
+
+		_source_tree="$(find /mnt/cdrom/ -print)" # isoinfo's -f option mimics find's -print option; whatever our source type is, the output will be the same
+
+		set -e
+
+	# Source type is ISO file
+	elif [[ "$_source_type" == iso ]]; then
+
+		write_host --output="Processing $_infile..."
+
+		_basename="$(basename "$_infile")"
+
+		_mkv_command_source_parameter="iso:$_infile"
+
+		# We're guessing that the iso optarg is valid, but we need isoinfo to
+		# knock first before we know for sure - unsetting exit-on-error
+		# temporarily lets isoinfo collect data so if the iso is invalid, we can
+		# exit on error properly later.
+		set +e
+
+		_source_tree="$(isoinfo -i "$_infile" -f)" # isoinfo's -f option mimics find's -print option; whatever our source type is, the output will be the same
+
+		set -e
+
+	# Invalid source type specified
+	else
+
+		write_host --error="Unknown source type $_source_type (${FUNCNAME[0]})"
+		exit_script --error
+
+	fi
+
+	# Same idea as above.
+	set +e
+
+	_bd_index="$(echo "$_source_tree" | grep "BDMV/index.bdmv")"
+	_bd_index_backup="$(echo "$_source_tree" | grep "BDMV/BACKUP/index.bdmv")"
+	_dvd_ifo="$(echo "$_source_tree" | grep "VIDEO_TS/VIDEO_TS.IFO")"
+	_dvd_ifo_backup="$(echo "$_source_tree" | grep "VIDEO_TS/VIDEO_TS.BUP")"
+
+	set -e
+
+	# Detect DVD or Blu-ray, set read cache size to 512mb or 1024mb
+	# respectively
+
+	# todo if you want this script to correctly throw an error if missing an
+	# infile arg for iso mode, what you should really do is change how the
+	# option itself is constructed - instead of this:
+
+	# auto-decrypt -t iso -i /path/to/filename.iso
+
+	# combine them into this:
+
+	# auto-decrypt -i /path/to/filename.iso
+	
+	# ...where -i is now ISO mode, with a filename arg required and enforced,
+	# instead of infile opt
+
+	# /todo
+
+	# Source tree is BD structure
+	if [[ "$_bd_index" == *BDMV/index.bdmv* ]] || [[ "$_bd_index_backup" == *BDMV/BACKUP/index.bdmv* ]]; then
+
+		# Recommended read cache value for Blu-ray
+		_cache_size=1024
+
+		write_host --output="Blu-ray found, setting cache size to ${_cache_size}mb..."
+
+	# Source tree is DVD structure
+	elif [[ "$_dvd_ifo" == *VIDEO_TS/VIDEO_TS.IFO* ]] || [[ "$_dvd_ifo_backup" == *VIDEO_TS/VIDEO_TS.BUP* ]]; then
+
+		# Recommended read cache value for DVD's
+		_cache_size=512
+
+		write_host --output="DVD found, setting cache size to ${_cache_size}mb..."
+
+	# Not a supported source
+	else
+
+		# relavent diagnostic vars
+		# echo $_source_tree
+		# echo $_bd_index
+		# echo $_bd_index_backup
+		# echo $_dvd_ifo
+		# echo $_dvd_ifo_backup
+
+		write_host --error="Source not a Blu-ray or DVD disc or ISO file."
+		exit_script --error
+
+	fi
+
+	# Create _outdir if it doesn't exist
+	if [[ ! -d "$_outdir" ]]; then
+
+		write_host --output="$_outdir does not exist, creating ${_outdir}..."
+
+		mkdir -p "$_outdir"
+
+	fi
+
+	# Create temporary subfolder in _outdir for processing outfiles in. This
+	# is a good idea because huge video dumps from DVDs or Blu-rays should NOT
+	# be saved, not even temporarily, to /tmp or C:\Windows\Temp on your OS
+	# drive, and outdir is guaranteed to A) have write permissions, and B)
+	# enough space for storing video data sets in the first place.
+	_tmpdir="${_outdir}/._${PROGNAME}"
+	_tmpdir_original="$_tmpdir"
+
+	mkdir -p "$_tmpdir"
+
+	# Flush hidden subfolder if it isn't empty. Note the ${var:?message}
+	# notation, to protect against any chance of accidentally expanding to all
+	# files under /!
+	rm -rf "${_tmpdir:?}/*" # if already empty, -f will prevent this from throwing an error
+
+	# Decrypt and split ISO (robot automation mode)
+	# set +e
+
+	# makemkvcon --decrypt --cache="$_cache_size" --noscan --progress=-stdout --robot mkv iso:"$_infile" all "$_tmpdir"
+
+	# set -e
+
+	# todo huh... if MAKEMKVCON is an EXE binary, it's asking Windows to write
+	# to the filesystem - and Windows can't see WSL pathnames. how do you
+	# convert _tmpdir to a Windows-style path?
+	if [[ "$MAKEMKVCON" == *makemkvcon.exe ]]; then
+
+		pushd "$_tmpdir"
+
+		_tmpdir="$(pwd -P)"
+		_tmpdir="$(wslpath -w "$_tmpdir")" # temporarily convert _tmpdir to Windows-style path so makemkv.exe can think - note the -P flag, which is critical to resolving symlinks and giving wslpath something that it can faithfully translate into a drive letter path instead of a UNC wsl path!
+
+		popd
+
+	fi
+
+	# todo tmp experiment
+	local _progress_opt
+	local _robot_opt
+
+	# defaults
+	_progress_opt="--progress=-stdout"
+	_robot_opt="--robot"
+
+	# overrides
+	# _progress_opt=
+	_robot_opt=
+
+	# /todo
+
+	# Decrypt and split ISO
+	set +e
+
+	# Note: makemkvcon appears to be unique in that it treats null bytes as
+	# "invalid commands", rather than ignoring them, making it impossible to
+	# pass empty option strings as arguments to it. To conditionally set options
+	# like --robot, we have to wrap makemkvcon in an if-statement. I just don't
+	# feel like doing it now. (todo or you could just workaround by setting
+	# empty option string vars with a space character instead of a null byte,
+	# just sayin)
+	"$MAKEMKVCON" \
+		--decrypt \
+		--cache="$_cache_size" \
+		--noscan \
+		--progress=-stdout \
+		--minlength=10 \
+		mkv \
+		"$_mkv_command_source_parameter" \
+		all \
+		"${_tmpdir}/"
+
+	set -e
+
+	# reset _tmpdir to Linux-style path
+	_tmpdir="$_tmpdir_original"
+
+	# Move and rename files. Currently, makemkvcon writes filenames based just
+	# on generic titles, NOT the unique source file name, and there is no way
+	# to change this behavior, so to avoid naming conflicts in batch
+	# operations, we first write the files to a temporary subfolder and then
+	# manually rename them before moving them to _outdir.
+
+	# todo the above is your merit for creating tmp subfolder, bump it up to
+	# when subfolder creation happens
+
+	# Note the usage of -print0 in the find command, which uses NUL bytes as
+	# filename delimiters; and -d '' in the read command to instruct it to
+	# read all text into the file variable until it finds a NUL byte. By
+	# default, find and read delimit their input with newlines; however, since
+	# filenames can potentially contain newlines themselves, this default
+	# behaviour will split up those filenames at the newlines and cause the
+	# loop body to fail. Additionally it is necessary to set IFS to an empty
+	# string, because otherwise read would still strip leading and trailing
+	# whitespace. See FAQ #20 for more details.
+
+	# http://mywiki.wooledge.org/BashFAQ/001
+
+	find "$_tmpdir" -type f -print0 |
+	(
+		while IFS= read -r -d '' _tmpfile; do
+
+			# assuming that:
+			# _infile is a full pathname (we don't have that in disc mode)
+			# we could use the basename of "_infile" as template for our output because we need unique names
+
+			# to get unique names for outfiles, name them after infile (source ISO filename as template)
+
+			# mebbe a more reliable and generic way of getting a unique base
+			# name derived from the source media is to use disc metadata rather
+			# than a filename that may or may not be there
+			# _outfile="${_outfile%\.*}_$(basename "$_tmpfile")"
+
+			# Sanitize the basename, whether we're using an ISO file or
+			# user-specified name
+			_outfile="${_basename%\.*}_$(basename "$_tmpfile")"
+
+			# we just have to conditionallly calculate _outfile, the unique filename, in both disc and iso mode
+
+			mv "$_tmpfile" "${_outdir}/${_outfile}"
+
+		done
+
+		# Because IFS was set inside the subshell, we don't need to reset it once
+		# we exit the subshell.
+	)
+
+	# Cleanup temporary files
+	write_host --output="Cleaning up temporary files..."
+
+	# Note the ${var:?message} notation, to protect against any chance of
+	# accidentally expanding to all files under /!
+	rm -rf "${_tmpdir:?}" # if already empty, -f will prevent this from throwing an error
+
+	write_host --output="Job done."
+	get_help --page=JOBDONEMSG
+}
+
+# Exit
+exit_script()
+{
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		# Error exit
+		-e | --error )
+			invoke_cleanup
+			exit 1
+			;;
+
+		# Graceful exit
+		-g | --graceful )
+			invoke_cleanup
+			exit
+			;;
+
+		* )
+			write_host --error="Unknown option $i (${FUNCNAME[0]})"
+			invoke_cleanup
+			exit 1
+			;;
+
+	esac
+	done
+
+	# Default behavior (same as graceful exit) when run w/o options
+	invoke_cleanup
+	exit
+}
+
+# Help
+get_help()
+{
+	local _help_message
+	local _page_name
+
+	# Defaults
+	_help_message="$(read_help SHORT)"
+
+	for i; do
+	case $i in
+
+		# Display a help page
+		-p=* | --page=* )
+			_page_name="${i#*=}"
+			_help_message="$(read_help "$_page_name")"
+			;;
+
+		# Unknown option
+		* )
+			write_host --error="Unknown option $i (${FUNCNAME[0]})"
+			exit_script --error
+			;;
+
+	esac
+	done
+
+	echo "$_help_message"
+}
+
+# Parse command-line
+get_options()
+{
+	# Options
+	local _basename
+	local _basename_opt
+	local _indir
+	local _infile
+	local _infile_opt
+	local _outdir
+	local _outdir_option_protected
+	local _source_type
+
+	# Defaults
+	_basename_opt=                  # unset by default
+	_infile_opt=					# unset by default
+	_outdir="$(pwd)"				# if in disc mode, we don't specify an indir, but we still must be able to expect a default outdir based on something - pwd is all that's left
+	_outdir_option_protected=false
+
+	# Display help message and exit if no option specified
+	if [[ $# -eq 0 ]]; then
+
+		get_help
+		exit_script
+
+	fi
+
+	# With getops, invalid options don't stop the processing - if we want to
+	# stop the script, we have to do it ourselves (exit in the right place).
+	while getopts "$GETOPTS_OPTSTRING" i; do
+	case $i in
+
+		\? )
+			write_host --error="Invalid option: -$OPTARG"
+			exit_script --error
+			;;
+
+		: )
+			write_host --error="Option -$OPTARG requires an argument"
+			exit_script --error
+			;;
+
+	esac
+	done
+
+	# Reset getopts
+	OPTIND=1
+
+	# Get values
+	while getopts "$GETOPTS_OPTSTRING" i; do
+	case $i in
+
+		# Basename (used only for disc mode)
+		n )
+			_basename="$OPTARG"
+			_basename_opt="--basename=${_basename}"
+			;;
+
+		# Outdir
+		o )
+			_outdir="$OPTARG"
+			_outdir_option_protected=true
+			;;
+
+		# Source type (disc or ISO)
+		t )
+			_source_type="$OPTARG"
+			;;
+
+	esac
+	done
+
+	# Reset getopts
+	OPTIND=1
+
+	# Wait until after _source_type is set to decide whether to set _infile
+	while getopts "$GETOPTS_OPTSTRING" i; do
+	case $i in
+
+		# Infile
+		i )
+			# Treat infile option as a mistake and ignore it if we're in disc
+			# mode - this prevents _indir from unnecessarily overwriting _outdir
+			# if _outdir had not been explicitly set (perhaps the user was
+			# expecting pwd to be outdir by default - the user shouldn't have
+			# specified indir if in disc mode, but maybe they did thinking they
+			# had to, which becomes the same as asking auto-decrypt to save its
+			# output to _indir, which might very well be the path to the disc
+			# drive it can't write to).
+
+			# Example: Decrypt and save output from disc drive to present working directory
+			# $ auto-decrypt -t disc)
+
+			if [[ "$_source_type" == iso ]]; then
+
+				_infile="$OPTARG"
+				_indir="$( cd "$( dirname "$_infile" )" && pwd )"
+				_infile="$(basename "$_infile")"
+
+				# Set internal infile option for convertto_mkv function
+				_infile_opt="--infile=${_indir}/${_infile}"
+
+				# While _outdir is initially set to _indir by default, we always
+				# give the (optional) -o option preferential treatment if it is
+				# explicitly set, whether it is set before or after -i option.
+				if [[ "$_outdir_option_protected" == false ]]; then
+
+					_outdir="$_indir"
+
+				fi
+
+			fi
+		;;
+
+	esac
+	done
+
+	# Reset getopts
+	OPTIND=1
+
+	# Parse options
+	while getopts "$GETOPTS_OPTSTRING" i; do
+	case $i in
+
+		# Help message
+		h )
+			get_help
+			;;
+
+		# Process source type
+		t )
+			# Check if dependencies exist in PATH and are executable
+			get_command --name="$MAKEMKVCON" # via https://www.makemkv.com/forum/viewtopic.php?f=3&t=224 | via choco install makemkv
+			get_command --name="isoinfo"    # via apt-get install genisoimage
+
+			# convertfrom_iso only supports converting Blu-ray and DVD images
+			# (saved as ISO files) into one or more Matroska files
+			convertto_mkv \
+				--type="$_source_type" \
+				"$_basename_opt" \
+				"$_infile_opt" \
+				--outdir="$_outdir"
+				# todo you can make the above prettier by setting everything through option vars
+			;;
+
+		v )
+			get_help --page=VERSION
+			;;
+
+	esac
+	done
+}
+
+# Check if command exists in PATH and is executable
+get_command()
+{
+	local _command_name
+
+	# Exit on error if no option specified
+	if [[ $# -eq 0 ]]; then
+
+		write_host --error="Missing option (${FUNCNAME[0]})"
+		exit_script --error
+
+	fi
+
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		# Command name
+		-n=* | --name=* )
+			_command_name="${i#*=}"
+			;;
+
+		# Unknown option
+		* )
+			write_host --error="Unknown option $i (${FUNCNAME[0]})"
+			exit_script --error
+			;;
+
+	esac
+	done
+
+	if ! [[ -x $(command -v "$_command_name") ]]; then
+
+		write_host --error="$_command_name not in PATH or not executable"
+		exit_script --error
+
+	fi
+}
+
+# Handle trapped signals
+get_signals()
+{
+	# Exit on error if no option specified
+	if [[ $# -eq 0 ]]; then
+
+		write_host --error="Missing option (${FUNCNAME[0]})"
+		exit_script --error
+
+	fi
+
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		INT )
+			write_host --error="Program interrupted by user"
+			exit_script --error
+			;;
+
+		TERM )
+			write_host --error="Program terminated"
+			exit_script
+			;;
+
+		* )
+			write_host --error="Terminating on unknown signal"
+			exit_script --error
+			;;
+
+	esac
+	done
+}
+
+# Print warnings
+get_warning()
+{
+	local _page_name
+	local _warning_message
+
+	# Exit on error if no option specified
+	if [[ $# -eq 0 ]]; then
+
+		write_host --error="Missing option (${FUNCNAME[0]})"
+		exit_script --error
+
+	fi
+
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		# Display a specific warning
+		-p=* | --page=* )
+			_page_name="${i#*=}"
+			_warning_message="$(read_warning "$_page_name")"
+			;;
+
+		# Unknown option
+		* )
+			write_host --error="Unknown option $i (${FUNCNAME[0]})"
+			exit_script --error
+			;;
+
+	esac
+	done
+
+	echo "$_warning_message"
+}
+
+# Perform pre-exit housekeeping
+invoke_cleanup()
+{
+	return
+}
+
+# Help pages
+read_help()
+{
+# Exit on error if no option specified
+if [[ $# -eq 0 ]]; then
+
+	write_host --error="Missing option (${FUNCNAME[0]})"
+	exit_script --error
+
+fi
+
+# Split on $@ array instead of spaces
+for i; do
+case $i in
+
+JOBDONEMSG )
+echo """\
+Did you get everything from the disc menu that you wanted? Don't forget to
+grab the title for each, well, title! (Hint: Suffix the filenames of your
+newly-ripped MKVs with title names that are often only viewable in the disc's
+menu.)
+"""
+;;
+
+# Default help message
+SHORT )
+echo """\
+$PROGNAME ver. $VERSION
+Intelligent wrapper for makemkvcon. Decrypt and copy all titles from disc or
+ISO file and save as Matroska files.
+
+$PROGNAME only supports converting Blu-ray and DVD discs or images (saved as
+ISO files) into one or more Matroska files. In this process, the source
+content is also decrypted. Batch control is best handled by another script.
+
+$PROGNAME has two modes: Disc mode and ISO mode. One must be specified.
+
+Usage: $PROGNAME [-hv] -t disc [-o outdir] [-n basename]
+Usage: $PROGNAME [-hv] -t iso -i infile [-o outdir]
+
+Options:
+-h           Display this help message and exit.
+-i infile    Infile.
+-n basename  Specify a basename to use for naming outfiles in disc mode (default: cdrom).
+-o outdir    Outdir (default: infile dirname).
+-t disc|iso  Source type.
+-v           Display version.
+"""
+
+# Append a note to the default help message if the script requires root
+# privileges.
+if [[ "$ROOT_REQUIRED" == true ]]; then
+	local _root_message
+
+	_root_message="$(get_warning --page=ROOT)"
+
+	echo "NOTE: $_root_message"
+fi
+;;
+
+# Display version
+VERSION )
+echo """\
+$VERSION
+"""
+;;
+
+# Unknown option
+* )
+write_host --error="Unknown option $i (${FUNCNAME[0]})"
+exit_script --error
+;;
+
+esac
+done
+
+}
+
+# Warning messages
+read_warning()
+{
+# Exit on error if no option specified
+if [[ $# -eq 0 ]]; then
+
+	write_host --error="Missing option (${FUNCNAME[0]})"
+	exit_script --error
+
+fi
+
+# Split on $@ array instead of spaces
+for i; do
+case $i in
+
+# Root required
+ROOT )
+echo """\
+You must be the superuser to run this script.
+"""
+;;
+
+# Unknown option
+* )
+write_host --error="Unknown option $i (${FUNCNAME[0]})"
+exit_script --error
+;;
+
+esac
+done
+}
+
+# Trap signals
+watch_signals()
+{
+	# trap "get_signals EXIT" EXIT
+	trap "get_signals TERM" TERM HUP
+	trap "get_signals INT" INT
+}
+
+# Write to stdout or stderr
+write_host()
+{
+	local _message
+	local _output
+	local _separator
+	local _stream
+	local _tag
+	local _tag_option_protected
+
+	# [ TAG > SEPARATOR > MSG ] = OUTPUT
+
+	# Defaults
+	_separator=": "
+	_stream=STDOUT
+	_tag_option_protected=false
+
+	# Error if no option specified
+	if [[ $# -eq 0 ]]; then
+
+		_tag="${PROGNAME} [error]"
+		_message="Missing option (${FUNCNAME[0]})"
+		_output="${_tag}${_separator}${_message}"
+		echo "$_output" >&2
+		exit_script --error
+
+		# Equivalent:
+		#   write_host --error="Missing option (${FUNCNAME[0]})"
+		#   exit_script --error
+
+	fi
+
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		# Debug message
+		-d=* | --debug=* )
+			# We always give the (optional) --no-tag option preferential
+			# treatment if it is explicitly used, whether it is used before or
+			# after this option.
+			if [[ "$_tag_option_protected" == false ]]; then
+
+				_tag="${PROGNAME} [debug]"
+
+			fi
+
+			_message="${i#*=}"
+			;;
+
+		# Error output. write_host can give you error messages for sorting
+		# convenience, but doing so WILL NOT RETURN AN ERROR EXIT CODE, since
+		# it is a successful operation. Thus, this should typically be
+		# invoked, then followed up by manually returning an error exit code.
+
+		# Example:
+		#   write_host --error="Unknown option $i (${FUNCNAME[0]})"
+		#   exit_script --error
+
+		-e=* | --error=* )
+			# We always give the (optional) --no-tag option preferential
+			# treatment if it is explicitly used, whether it is used before or
+			# after this option.
+			if [[ "$_tag_option_protected" == false ]]; then
+
+				_tag="${PROGNAME} [error]"
+
+			fi
+
+			_message="${i#*=}"
+			_stream=STDERR
+			;;
+
+		# Print messages without tag prefix
+		-n | --no-tag )
+			_tag=
+			_tag_option_protected=true
+			_separator=
+			;;
+
+		# Normal output
+		-o=* | --output=* )
+			# We always give the (optional) --no-tag option preferential
+			# treatment if it is explicitly used, whether it is used before or
+			# after this option.
+			if [[ "$_tag_option_protected" == false ]]; then
+
+				_tag="${PROGNAME}"
+
+			fi
+
+			_message="${i#*=}"
+			;;
+
+		# Unknown option
+		* )
+			_tag="${PROGNAME} [error]"
+			_message="Unknown option $i (${FUNCNAME[0]})"
+			_output="${_tag}${_separator}${_message}"
+			echo "$_output" >&2
+			exit_script --error
+			;;
+
+	esac
+	done
+
+	# Compose message
+	_output="${_tag}${_separator}${_message}"
+
+	# Write to stdout
+	if [[ "$_stream" == STDOUT ]]; then
+
+		echo "$_output"
+
+	# Write to stderr
+	elif [[ "$_stream" == STDERR ]]; then
+
+		echo "$_output" >&2
+
+	fi
+}
+
+# Main logic
+main "$@"

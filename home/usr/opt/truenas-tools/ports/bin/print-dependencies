@@ -1,0 +1,11 @@
+make pretty-print-run-depends-list > dependency-list
+
+# After cleaning this file so that it's just dependencies and the package itself (which you must add), you can run the following command to create packages of the port and of all its dependencies - recursively!
+
+# create package for software and its recursive dependencies from file from already installed port
+# pkg create -o /USB_drive `cat <pkgname>-list`
+
+# after building, you should deinstall to make room in your installed packages list:
+# make deinstall
+
+# mebbe a better workflow would be to 'make package' after recursive config, instead of 'make install clean'? would 'make clean' wipe the package you just made?

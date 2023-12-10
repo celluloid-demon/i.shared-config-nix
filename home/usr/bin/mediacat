@@ -1,0 +1,31 @@
+#!/bin/bash
+# ---------------------------------------------------------------------------
+# mediacat - Generate and concatenate tag-based media symlinks into tag-based
+# folders, useful for virtual media libraries. Requires mediacat CSV tags.
+
+# Reserved tag values:
+#   mediacat  required value to help mediacat correctly associate with CSV tag
+#   source    identifies parent folder, and all sub-folders, as mediacat
+#             source
+
+# Tag values can be named anything a standard folder can be named! As always,
+# use common sense and avoid special characters, but generally, we go by unix-
+# friendly naming conventions.
+
+# Usage: mediacat
+
+# Revision history:
+# 2015-04-03 Created by Jonathan Dudrey
+# ---------------------------------------------------------------------------
+
+# Define functions
+main() {
+  do_thing
+}
+
+do_thing() {
+  echo "Did a thing."
+}
+
+# Main logic
+main

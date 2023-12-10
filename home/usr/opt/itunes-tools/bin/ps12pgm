@@ -1,0 +1,829 @@
+#!/bin/bash
+# Convert a raw subtitle stream to a pgm image sequence. For every caption, it
+# creates an image.
+
+# ************************
+# *     START SCRIPT     *
+# ************************
+
+# Shell options
+set -e
+set -u
+set -o pipefail
+
+# Constants
+readonly GETOPTS_OPTSTRING=":hi:o:v"
+readonly PROGNAME="${0##*/}"
+readonly ROOT_REQUIRED=false
+readonly SAVE_IFS="$IFS"
+readonly SCPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+readonly VERSION="1.0"
+
+main()
+{
+	watch_signals
+	confirm_root
+	get_options "$@"
+	exit_script
+}
+
+# is_os()
+# {
+# 	local _uname_out
+# 	local _os
+
+# 	_uname_out="$(uname -s)"
+
+# 	case "$_uname_out" in
+
+# 		Darwin* )
+# 			_os="macos"
+# 			;;
+
+# 		Linux* )
+# 			_os="linux"
+# 			;;
+
+# 		* )
+# 			write_host --error="UNSUPPORTED OS: $_uname_out"
+# 			exit_script --error
+# 			;;
+
+# 	esac
+
+# 	# Return OS name
+# 	echo "$_os"
+# }
+
+# Check for root EUID
+confirm_root()
+{
+	local _root_message
+
+	if [[ "$ROOT_REQUIRED" == true ]] && (( EUID != 0 )); then
+
+		_root_message="$(get_warning --page=ROOT)"
+
+		write_host --error="$_root_message"
+		exit_script --error
+
+	fi
+}
+
+# Exit
+exit_script()
+{
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		# Error exit
+		-e | --error )
+			invoke_cleanup
+			exit 1
+			;;
+
+		# Graceful exit
+		-g | --graceful )
+			invoke_cleanup
+			exit
+			;;
+
+		* )
+			write_host --error="Unknown option $i (${FUNCNAME[0]})"
+			invoke_cleanup
+			exit 1
+			;;
+
+	esac
+	done
+
+	# Default behavior (same as graceful exit) when run w/o options
+	invoke_cleanup
+	exit
+}
+
+# Check if command exists in PATH and is executable
+get_command()
+{
+	local _command_name
+
+	# Exit on error if no option specified
+	if [[ $# -eq 0 ]]; then
+
+		write_host --error="Missing option (${FUNCNAME[0]})"
+		exit_script --error
+
+	fi
+
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		# Command name
+		-n=* | --name=* )
+			_command_name="${i#*=}"
+			;;
+
+		# Unknown option
+		* )
+			write_host --error="Unknown option $i (${FUNCNAME[0]})"
+			exit_script --error
+			;;
+
+	esac
+	done
+
+	if ! [[ -x $(command -v "$_command_name") ]]; then
+
+		write_host --error="$_command_name not in PATH or not executable"
+		exit_script --error
+
+	fi
+}
+
+# Help
+get_help()
+{
+	local _help_message
+	local _page_name
+
+	# Defaults
+	_help_message="$(read_help SHORT)"
+
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		# Display a help page
+		-p=* | --page=* )
+			_page_name="${i#*=}"
+			_help_message="$(read_help "$_page_name")"
+			;;
+
+		# Unknown option
+		* )
+			write_host --error="Unknown option $i (${FUNCNAME[0]})"
+			exit_script --error
+			;;
+
+	esac
+	done
+
+	echo "$_help_message"
+}
+
+# Parse command-line
+get_options()
+{
+	# Options
+	# local _indir
+	local _infile
+	# local _outdir
+	local _outfile
+	local _infile_contents
+	# local _subtitle_stream_count # used for loop to append option string parts to mkvextract call (running subsequent mkvextract calls on the same outfile_base will NOT append outfile_base, but rather override it, loosing previous stream information! subtitle streams must be counted and extracted together as a batch into the ripped file)
+	local _mkvextract_option
+	local _mkvextract_options # option string
+	local _stream_count
+	local _stream_id
+	local _is_vobsub
+	local _extraction_spec_string
+	local _mode
+	local _outfile_base_option_protected
+	local _stream_sequence
+	local _os
+	local _language
+	local _outfile_base
+	local _outfile_base_original
+	local _suffix
+	local _infile_idx
+	local _infile_idx_contents
+
+	_mode="tracks" # todo belongs w/ defaults - rename to _MODE (and other appropriate constants) as a readonly?
+	_outfile_option_protected=false
+	_extraction_spec_string= # workaround for edge case where MKV w/ no subtitles causes _extraction_spec_string to be unbound
+
+	# Display help message and exit if no option specified
+	if [[ $# -eq 0 ]]; then
+
+		get_help
+		exit_script
+
+	fi
+
+	# With getops, invalid options don't stop the processing - if we want to
+	# stop the script, we have to do it ourselves (exit in the right place).
+	while getopts "$GETOPTS_OPTSTRING" i; do
+	case $i in
+
+		\? )
+			write_host --error="Invalid option: -$OPTARG"
+			exit_script --error
+			;;
+
+		: )
+			write_host --error="Option -$OPTARG requires an argument"
+			exit_script --error
+			;;
+
+	esac
+	done
+
+	# Reset getopts
+	OPTIND=1
+
+	# Get values
+	while getopts "$GETOPTS_OPTSTRING" i; do
+	case $i in
+
+		# Infile
+		i )
+			_infile="$OPTARG"
+			# _outfile_base="$_infile"
+
+			# While _outdir is initially set to _indir by default, we always
+			# give the (optional) -o option preferential treatment if it is
+			# explicitly set, whether it is set before or after -i option.
+			if [[ "$_outfile_option_protected" == false ]]; then
+
+				_outfile="$_infile"
+
+			fi
+			;;
+
+		# Outfile
+		o )
+			_outfile="$OPTARG"
+			_outfile_option_protected=true
+
+			;;
+
+	esac
+	done
+
+	# Reset getopts
+	OPTIND=1
+
+	# Parse options
+	while getopts "$GETOPTS_OPTSTRING" i; do
+	case $i in
+
+		# Help message
+		h )
+			get_help
+			;;
+
+		# Process infile
+		i )
+			# Check if dependencies exist in PATH and are executable
+			get_command --name="subtitle2pgm" # part of the subtitleripper package
+
+			# exit if not a *.ps1 file
+			if [[ "$_infile" != *.ps1 ]]; then
+
+				write_host --error="File not a *.ps1 file, aborting."
+				exit_script --error
+
+			fi
+
+			# todo okay i think what we're building towards to here is an
+			# association between the IDX file (w/ its DVD language metadata)
+			# and the PGM sequence we run OCR on - it is VERY important that
+			# we be able to specify the language to the best of our knowledge
+			# to our OCR for the best accuracy! do this via your naming
+			# conventions or a file tag(=value) on the PGM files themselves
+			# you can query.
+
+			# hmmm... or you could just set your tesseract wrapper to accept a
+			# language option, and manually check the language suffix in the
+			# PGM sequence filenames. :P that only works less if you're trying
+			# to automate for multiple PGM sequences that among them may have
+			# more than one language, where automatic language detection (or
+			# language memory) would be effective. okay, so give this script a
+			# manual language option, AND give it the ability to find the
+			# IDX/SRTX file.
+
+			_outfile_base=${_outfile%\.*}
+			# _outfile_base_original="$_outfile_base"
+			# _suffix=0
+
+			# this is also our test to see if this is a movie file we're dealing with
+			# _infile_contents="$(ffprobe -loglevel error -show_streams -print_format xml "$_infile")"
+			# _infile_idx_contents="$(ffprobe -loglevel error -show_streams -print_format xml "$_infile_idx")"
+
+			# Use 'sudo apt autoremove' to remove them.
+
+			# set -e
+
+			# okay, looks like we're gonna have to loop this, here goes...
+
+			# _stream_count=$(xmllint --xpath "count(/ffprobe/streams/stream)" - <<< "$_infile_contents") # count total streams in file to loop through
+			# _stream_sequence="$(seq $_stream_count)"
+
+			# _stream_idx_count=$(xmllint --xpath "count(/ffprobe/streams/stream)" - <<< "$_infile_idx_contents")
+
+			# we check if they at least have a matching number of streams, and
+			# exit on error if they don't
+			# if (( _stream_count != _stream_idx_count )); then
+
+			# 	write_host --error="SUB file and IDX file have different stream counts (was one of them modified after they were created?), aborting."
+			# 	exit_script --error
+
+			# fi
+
+			# For echo stream found, note unquoted var for proper word-splitting
+			# for i in $_stream_sequence; do
+
+				# set relative stream index to be (( i - 1 )), stream indexes start at zero
+				# _stream_id=$(( i - 1 ))
+				# echo "$i"
+				# echo "$_stream_id"
+
+				# Ask if this stream is a dvd subtitle (VOBSUB) stream
+				# _is_vobsub=$(xmllint --xpath "/ffprobe/streams/stream[@index='$_stream_id']/@codec_name='dvd_subtitle'" - <<< "$_infile_contents")
+
+				# echo "$_is_vobsub"
+
+				# if [[ "$_is_vobsub" == true ]]; then
+
+					# echo "Hey! Listen!"
+
+					# set/append mkvextract extraction spec (source stream) string
+
+					# since we know this is a vobsub, now we ask for the
+					# subtitle stream's language. we get this language
+					# metadata from the idx file.
+					# _language="$(xmllint --xpath "string(/ffprobe/streams/stream[@index='$_stream_id']/tag[@key='language']/@value)" - <<< "$_infile_idx_contents")"
+					# _language_original="$_language" # we'll use this later as a basename for version incrementing to avoid name conflicts
+
+					# todo no, this needs tcextract syntax, not mkvextract, like this:
+
+					# note: this HAS to be fed a .sub file (the MKV it's
+					# ripped from won't do), for whatever weird fucking
+					# reason... yeah.
+
+					# okay... the problem here is that multiple streams in a
+					# vobsub container file may be in the same language
+					# (usually english), so this loop may overwrite some of
+					# its files. need to append suffixes in a loop to avoid
+					# name conflicts.
+					# if [ -f "$_outfile_base"*".pgm" ]; then
+
+					# 	write_host --error="PGM image sequence with identical name already present (have you already converted this PS1 file?), aborting."
+					# 	exit_script --error
+
+						# _suffix=$(( _suffix + 1 ))
+
+						# increment suffix until _outfile_base unique
+						# _outfile_base="${_outfile_base_original}${_suffix}"
+						# _language="${_language_original}${_suffix}"
+
+					# fi
+
+					# Test if part of image sequence already exists using glob
+					# pattern (this for loop will also test for directories,
+					# so we add a "filter" inside).
+					for file in "$_outfile_base"*".pgm"; do
+
+						if [[ -f "$file" ]]; then
+
+							# file found, exit on error
+							write_host --error="PGM image sequence with identical basename \"$_outfile_base\" present (have you already converted this PS1 file?), aborting."
+							exit_script --error
+
+						fi
+
+					done
+
+					# todo yeah for your own sanity, enforce a subdirectory or
+					# something, the sheer number of these files is batty.
+					subtitle2pgm \
+						-i "$_infile" \
+						-o "$_outfile_base" \
+						-P
+
+					# reset _outfile_base (remove tmp suffixes from it for future loops)
+					# _outfile_base="$_outfile_base_original"
+
+					# reset suffix increment counter
+					# _suffix=0
+
+					# _extraction_spec_string="${_extraction_spec_string} ${_stream_id}:${_outfile}"
+
+					# echo "$_extraction_spec_string"
+
+					# todo above, shouldn't _outfile_base be pre-pended with at least a relative or an absolute _outdir?
+
+					# todo stub: add logic to build two option streams in the
+					# same loop for both vobsubs and bluray subs, then just
+					# perform mkvextract twice, one with vobsub option string
+					# and the second with bluray sub option string
+
+				# fi
+
+			# done
+
+			# set -e
+
+			# todo comment cleanup
+
+			# Extract vobsubs into vobsub container file. Note how some vars
+			# are deliberately unquoted to provide proper word-splitting.
+			# (todo refine this wording)
+
+			# temporarily unsetting this shell option helps make this script
+			# more batch-friendly (mkvextract returns a non-zero exit status
+			# if _extraction_spec_string is unset, which would happen if the
+			# target MKV file had no subtitles)
+			# _os="$(is_os)"
+
+			# OS is macOS
+			# if [[ "$_os" == macos ]]; then
+
+				# _EXTENDED_REGEX_OPTION="-E" # todo make this lower-case, it's a variable now
+				# _regextype_positional_option= # unset regextype positional option on macOS
+
+				# set +e
+
+				# mkvextract macos arg order
+				# mkvextract \
+				# 	"$_infile" \
+				# 	"$_mode" \
+				# 	$_extraction_spec_string
+
+				# set -e
+
+			# OS is Linux
+			# elif [[ "$_os" == linux ]]; then
+
+				# _EXTENDED_REGEX_OPTION= # unset extended (modern) regex option on Linux systems
+				# todo wait, is this form the form of a primary, rather than an
+				# option? position in command string might be different! it's not a
+				# primary, it's a "positional option," so maybe it's fine where it is.
+
+				# _regextype_positional_option="-regextype posix-extended"
+
+				# set +e
+
+				# echo "$_mode"
+				# echo "$_infile"
+				# echo "$_extraction_spec_string"
+
+				# # mkvextract linux arg order
+				# mkvextract \
+				# 	"$_mode" \
+				# 	"$_infile" \
+				# 	$_extraction_spec_string
+
+				# set -e
+
+			# else
+
+				# write_host --error="Unsupported OS (${FUNCNAME[0]})"
+				# exit_script --error
+
+			# fi
+
+			# set +e
+
+			# macOS
+			# mkvextract \
+			# 	"$_infile" \
+			# 	"$_mode" \
+			# 	$_extraction_spec_string
+
+			# # Linux
+			# mkvextract \
+			# 	"$_mode" \
+			# 	"$_infile" \
+			# 	$_extraction_spec_string
+
+			# set -e
+			;;
+
+			# how could my dairy driver POSSIBLY afford to bring the milk counters to the grocery store, HOW, YOU ASK
+
+		# Print version
+		v )
+			get_help --page=VERSION
+			;;
+
+	esac
+	done
+}
+
+# Handle trapped signals
+get_signals()
+{
+	# Exit on error if no option specified
+	if [[ $# -eq 0 ]]; then
+
+		write_host --error="Missing option (${FUNCNAME[0]})"
+		exit_script --error
+
+	fi
+
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		INT )
+			write_host --error="Program interrupted by user"
+			exit_script --error
+			;;
+
+		TERM )
+			write_host --error="Program terminated"
+			exit_script
+			;;
+
+		* )
+			write_host --error="Terminating on unknown signal"
+			exit_script --error
+			;;
+
+	esac
+	done
+}
+
+# Print warnings
+get_warning()
+{
+	local _page_name
+	local _warning_message
+
+	# Exit on error if no option specified
+	if [[ $# -eq 0 ]]; then
+
+		write_host --error="Missing option (${FUNCNAME[0]})"
+		exit_script --error
+
+	fi
+
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		# Display a specific warning
+		-p=* | --page=* )
+			_page_name="${i#*=}"
+			_warning_message="$(read_warning "$_page_name")"
+			;;
+
+		# Unknown option
+		* )
+			write_host --error="Unknown option $i (${FUNCNAME[0]})"
+			exit_script --error
+			;;
+
+	esac
+	done
+
+	echo "$_warning_message"
+}
+
+# Perform pre-exit housekeeping
+invoke_cleanup()
+{
+	return
+}
+
+# Help pages
+read_help()
+{
+# Exit on error if no option specified
+if [[ $# -eq 0 ]]; then
+
+	write_host --error="Missing option (${FUNCNAME[0]})"
+	exit_script --error
+
+fi
+
+# Split on $@ array instead of spaces
+for i; do
+case $i in
+
+# Default help message
+SHORT )
+echo """\
+$PROGNAME ver. $VERSION
+Convert a raw subtitle stream to a pgm image sequence. For every caption, it
+creates an image.
+
+Usage: $PROGNAME [-hv] -i infile [-o outfile base]
+
+Options:
+-h               Display this help message and exit.
+-i infile        Infile.
+-o outfile base  Outfile (default: infile base).
+-v               Display version.
+"""
+
+# todo oh yeah you were talking about changing the scope of some scripts...
+# let's start. okay, extract-subtitles shouldn't be called what it is, it's
+# more of a non-linear (optional) backup tool, so really it should be
+# something like backup-subtitles. then you have the ACTUAL extraction work
+# that matters - vobsub streams to raw stream data, saved as PS1 files, which
+# tcextract gives you. there might not be a reason for you to rip vobsubs to
+# their own file for tcextract to do its job, so you might as well just loop
+# the tcextract call on the movie file itself.
+
+# todo okay, so first, you're gonna teach tcextract to look at a video file
+# and loop through its streams w/ the help of ffprobe and xmllint, looking for
+# DVD subs, and as soon as it finds even one dvd subtitle stream, it's gonna
+# extract not the subs w/ their index metadata, but the RAW bitstream itself
+# into a new PS1 file for that stream.
+
+# Append a note to the default help message if the script requires root
+# privileges.
+if [[ "$ROOT_REQUIRED" == true ]]; then
+	local _root_message
+
+	_root_message="$(get_warning --page=ROOT)"
+
+	echo "NOTE: $_root_message"
+fi
+;;
+
+# Display version
+VERSION )
+echo """\
+$VERSION
+"""
+;;
+
+# Unknown option
+* )
+write_host --error="Unknown option $i (${FUNCNAME[0]})"
+exit_script --error
+;;
+
+esac
+done
+}
+
+# Warning messages
+read_warning()
+{
+# Exit on error if no option specified
+if [[ $# -eq 0 ]]; then
+
+	write_host --error="Missing option (${FUNCNAME[0]})"
+	exit_script --error
+
+fi
+
+# Split on $@ array instead of spaces
+for i; do
+case $i in
+
+# Root required
+ROOT )
+echo """\
+You must be the superuser to run this script.
+"""
+;;
+
+# Unknown option
+* )
+write_host --error="Unknown option $i (${FUNCNAME[0]})"
+exit_script --error
+;;
+
+esac
+done
+}
+
+# Trap signals
+watch_signals()
+{
+	# trap "get_signals EXIT" EXIT
+	trap "get_signals TERM" TERM HUP
+	trap "get_signals INT" INT
+}
+
+# Write to stdout or stderr
+write_host()
+{
+	local _message
+	local _output
+	local _separator
+	local _stream
+	local _tag
+	local _tag_option_protected
+
+	# [ TAG > SEPARATOR > MSG ] = OUTPUT
+
+	# Defaults
+	_separator=": "
+	_stream=STDOUT
+	_tag_option_protected=false
+
+	# Error if no option specified
+	if [[ $# -eq 0 ]]; then
+
+		_tag="${PROGNAME} [error]"
+		_message="Missing option (${FUNCNAME[0]})"
+		_output="${_tag}${_separator}${_message}"
+		echo "$_output" >&2
+		exit_script --error
+
+		# Equivalent:
+		#   write_host --error="Missing option (${FUNCNAME[0]})"
+		#   exit_script --error
+
+	fi
+
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		# Debug message
+		-d=* | --debug=* )
+			# We always give the (optional) --no-tag option preferential
+			# treatment if it is explicitly used, whether it is used before or
+			# after this option.
+			if [[ "$_tag_option_protected" == false ]]; then
+
+				_tag="${PROGNAME} [debug]"
+
+			fi
+
+			_message="${i#*=}"
+			;;
+
+		# Error output. write_host can give you error messages for sorting
+		# convenience, but doing so WILL NOT RETURN AN ERROR EXIT CODE, since
+		# it is a successful operation. Thus, this should typically be
+		# invoked, then followed up by manually returning an error exit code.
+
+		# Example:
+		#   write_host --error="Unknown option $i (${FUNCNAME[0]})"
+		#   exit_script --error
+
+		-e=* | --error=* )
+			# We always give the (optional) --no-tag option preferential
+			# treatment if it is explicitly used, whether it is used before or
+			# after this option.
+			if [[ "$_tag_option_protected" == false ]]; then
+
+				_tag="${PROGNAME} [error]"
+
+			fi
+
+			_message="${i#*=}"
+			_stream=STDERR
+			;;
+
+		# Print messages without tag prefix
+		-n | --no-tag )
+			_tag=
+			_tag_option_protected=true
+			_separator=
+			;;
+
+		# Normal output
+		-o=* | --output=* )
+			# We always give the (optional) --no-tag option preferential
+			# treatment if it is explicitly used, whether it is used before or
+			# after this option.
+			if [[ "$_tag_option_protected" == false ]]; then
+
+				_tag="${PROGNAME}"
+
+			fi
+
+			_message="${i#*=}"
+			;;
+
+		# Unknown option
+		* )
+			_tag="${PROGNAME} [error]"
+			_message="Unknown option $i (${FUNCNAME[0]})"
+			_output="${_tag}${_separator}${_message}"
+			echo "$_output" >&2
+			exit_script --error
+			;;
+
+	esac
+	done
+
+	# Compose message
+	_output="${_tag}${_separator}${_message}"
+
+	# Write to stdout
+	if [[ "$_stream" == STDOUT ]]; then
+
+		echo "$_output"
+
+	# Write to stderr
+	elif [[ "$_stream" == STDERR ]]; then
+
+		echo "$_output" >&2
+
+	fi
+}
+
+# Main logic
+main "$@"

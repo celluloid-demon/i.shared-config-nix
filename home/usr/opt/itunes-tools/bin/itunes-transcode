@@ -1,0 +1,1327 @@
+#!/bin/bash
+
+# Transcoding video, the Don Melton way.
+
+# Wrapper script for batch-transcode-video. Produces space-efficient, high-
+# quality H265 videos that are compatible with iTunes. Reduces combined option
+# scope of batch-transcode-video and transcode-video from 50 to 9.
+
+# A note about transcoding on Windows:
+
+# Don Melton's detect-crop command has an optional dependency on mpv for
+# previewing crops. As of writing this, you can't launch graphical Linux apps
+# using WSL, but it is capable of launching Windows programs; this means you can
+# install mpv for Windows, make it searchable on the Windows side using the
+# Windows PATH (look up how to do this from the Control Panel), then use an
+# alias to intercept mpv commands as 'mpv.exe' and launch it from bash.
+
+# Further reading:
+# https://github.com/JMoVS/installing_video_transcoding_on_windows
+
+# Why itunes-transcode?
+
+# Why use a wrapper script for Don and Nicholas's wrapper scripts instead of
+# wrapping Handbrake itself? In short, itunes-transcode combines
+# transcode-video's rate-limiting feature with batch-transcode-video's command
+# line progress bars, which become more useful the more videos you batch-process
+# at a time.
+
+# A note on output:
+
+# We design the "best" output around universal and long-term availability, for
+# which we use iTunes-compatible video specs as our standard, combined with web
+# optimization to keep local or remote streaming via home media servers viable.
+# We also discard subtitles, because it's expected that they'll be processed
+# separately (for several reasons).
+
+# A note on subtitles:
+
+# ...oh boi
+
+# todo how about instead of "produces" you say "capable of producing" since
+# you're still deliberating what the best default output container format is
+# (mp4/mkv)?
+
+# Credit to Don Melton for transcode-video.
+
+# https://github.com/donmelton/video_transcoding
+
+# Credit to Nicholas Wronski for batch-transcode-video.
+
+# https://github.com/nwronski/batch-transcode-video
+
+# todo rewrite options so that -I is just the mp4-to-m4v rename flag? it
+# should do just that one thing, it shouldn't ALSO change the output container
+# format. let a separate container option do that for you. and THEN, let a
+# SEPARATE option do BOTH as a batch at the same time. give you more control.
+# the default should be no auto-renaming. the default container format should
+# be the more flexible MKV. make a note. this will make your options more
+# descriptive and specific.
+
+# todo can you "web-optimize" an MP4 file without re-converting the MP4
+# container? should add that as another script in your toolbelt, for
+# modernizing older MP4s in your library for more universal availability.
+# something like:
+#   $ ffmpeg -i input.mp4 -movflags faststart -acodec copy -vcodec copy output.mp4
+
+#   The -movflags faststart parameter is what tells ffmpeg to reorder the MP4
+#   video atoms so that moov is at the start. We are also instructing ffmpeg
+#   to copy the video and audio data instead of re-encoding them, so nothing
+#   gets altered.
+
+# A note on audio quality:
+
+# When making a file that is intended to be squeezed on a small medium or
+# streamed over a limited bandwidth, it may be tempting to scrounge bits off
+# the audio bitrate in order to keep a somewhat higher video bitrate, but this
+# is generally a bad idea. Audio is usually much smaller to begin with,
+# therefore skimping on audio bitrate won't gain much. It will only cause both
+# video and audio to become bad. Viewers are generally forgiving when the
+# image isn't great if audio is good, but not the other way round. Only if
+# your source has for instance a 5.1 soundtrack and you're encoding for a
+# portable device, you can and should gain a lot by downmixing the surround
+# track to plain stereo.
+
+# Note on "web optimization" of MP4 files:
+
+# If the planned delivery method is progressive download or streaming (RTMP or
+# HTTP), the moov atom will have to be moved to the beginning of the file.
+# This ensures that the required movie information is downloaded first,
+# enabling playback to start right away. If the moov atom is located at the
+# end of the file, it forces the download of the entire file first before it
+# will start playback. If the file is intended for local playback, then the
+# location of the moov atom will not impact the start time, since the entire
+# file is available for playback right away.
+
+# Another note on "web optimization" of MP4 files:
+
+# When you play a video, the program looks through the MP4 file, locates the
+# moov atom , and then uses that to find the start of the audio and video data
+# and begin playing. Unfortunately, atoms can appear in any order, so the
+# program doesn’t know where the moov atom will be ahead of time. Searching to
+# find the moov works fine if you already have the entire video file. However
+# another option is needed when you don’t have the entire video yet, such as
+# when you are streaming HTML5 video. That’s the whole point of streaming a
+# video! You can start watching it without having to download the entire video
+# first.
+
+# As the two notes above illustrate, the benefit of web optimization is mostly
+# a function of the client.
+
+# A note on "wb optimization" of MP4 files for the Roku:
+
+# Some clients can't play an MP4 if it isn't web optimized. If you read old
+# forum posts, you'll see that we (mistakenly) assumed the Roku couldn't
+# handle non-optimized MP4s, and so 36 hours ago we wouldn't try to Direct
+# Play non-optimized MP4s. It turns out that the Roku can play them, so in the
+# 2.2 update we changed the logic so that it will gladly Direct Play an MP4
+# regardless of being web optimized.
+
+# However, that doesn't mean that the location of the MOOV atom has no bearing
+# on the Roku. It still has to find it before it will start playing the video,
+# so it'll make a bunch of requests, essentially seeking, to find the MOOV atom
+# before playback starts. So if you compare the loading times for MP4s that are
+# being direct played, you'll usually see that web optimized files start much
+# more quickly. If the file is large and the video is on a mounted drive, the
+# difference can be dramatic.
+
+# Similarly, if you end up transcoding a file that isn't web optimized (maybe
+# it's an MP4 but it's not going to direct play for another reason), the startup
+# time can be dramatically affected because the transcoder has to seek around
+# looking for the MOOV atom before transcoding can start.
+
+# Once playback starts, it really shouldn't make any difference whether or not
+# the file was web optimized.
+
+# todo if the name of the tool is itunes-transcode, and the point is to produce
+# video that is compatible with itunes, shouldn't the default option be
+# itunes-friendly output?
+
+# Only video encoding is performed by the hardware encoder. Every stage prior to
+# and after video encoding including decoding, filters, audio/video sync, audio
+# encoding, muxing, etc., is performed by the CPU. As a result, it is normal to
+# have high (even 100%) CPU utilisation during encodes. It is common,
+# particularly on lower-end hardware, for the CPU to be a bottleneck for the
+# hardware video encoder. To minimize this effect, disable any filters that you
+# do not require. todo you have decomb filters specific to a DVD-centric
+# workflow, so mebbe make a note to process bluray-derived MKVs separately, as
+# they would not require decombing.
+
+# *****************************
+# *     DON MELTON SPEAKS     *
+# *****************************
+
+# How do you prepare your media for transcoding?
+
+# I have four rules when preparing my own media for transcoding:
+
+# *=only for HD content, such as Bluray
+
+# 1. [Decrypt disk images] Use MakeMKV to rip Blu-ray Discs and DVDs (keeping Blu-ray and DVD content separate).
+# 2. [Split disk images] Use MakeMKV to also rip each selected video as a single Matroska format .mkv file.
+# 3. [Backup subs] Look for forced subtitles and isolate them in their own track.
+# 4. [*Backup lossless audio] Convert lossless audio tracks to FLAC format.
+
+# How do you assess video transcoding quality?
+
+# I compare by visual inspection. Always with the video in motion, never frame
+# by frame. It's tedious but after years of practice I know which portions of
+# which videos are problematic and difficult to transcode. And I look at those
+# first.
+
+# In addition, I use the query-handbrake-log tool to report on ratefactor, the
+# average P-frame quantizer, to get a relative quality assessment from the x264
+# encoder.
+
+# What I don't use are peak signal-to-noise ratios or a structural similarity
+# index in an attempt to objectively compare quality. Although both metrics are
+# available to the x264 encoder, enabling either of them ironically disables key
+# psychovisual optimizations that improve quality.
+
+# ***********************
+# *     MY OWN SPIN     *
+# ***********************
+
+# 0. [rslsync upkeep] Make sure media folder is up to date and in sync!
+
+# Batch-convert like-content (only convert DVD-derived Matroskas, or only
+# convert Bluray-derived Matroskas, etc)... The thinking is that you'll probably
+# want to tweak your filter settings globally across an entire batch job - it's
+# useful if you know you won't have to worry about decombing DVDs in an
+# all-Bluray collection, for example, because then you can just disable filters
+# (which are processed by your CPU, even with hardware encoding enabled) and
+# your CPU will be less of a bottleneck when using hardware encoding (and
+# eliminating those bottlenecks becomes much more important with Bluray
+# content). todo mebbe this can bring back the merit of telling itunes-transcode
+# which "mode" you want it to run in (DVD Mode, Bluray Mode, etc).
+
+# --target big|small
+#   apply video bitrate target macro for all input resolutions
+#   (`big` trades some size for increased quality)
+#   (`small` trades some quality for reduced size)
+# SD (live action):  (target normal)
+# SD (animation):	 (target normal)
+# HD (live action):	 (target normal)
+# HD (animation):	--target big
+
+# ********************
+# *     EXAMPLES     *
+# ********************
+
+# Example 1: Transcoding a collection into iTunes-friendly videos.
+
+#   $ itunes-transcode -i INDIR -o OUTDIR -I
+
+# Example 2: Testing the output of your transcode settings, as quickly as
+# possible.
+
+#   $ itunes-transcode -i INDIR -o OUTDIR -I -l -c 1
+
+# Example 3: Dry-run.
+
+#   $ itunes-transcode -i INDIR -o OUTDIR -I -n
+
+# ************************
+# *     START SCRIPT     *
+# ************************
+
+# Shell options
+set -e
+set -u
+set -o pipefail
+
+# Constants
+readonly GETOPTS_OPTSTRING=":c:C:e:hi:Ilno:t:vV"
+readonly PROGNAME="${0##*/}"
+readonly ROOT_REQUIRED=false
+readonly SAVE_IFS="$IFS"
+readonly SCPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+readonly VERSION="1.0"
+
+# SPECIAL CONSTANTS
+
+# (I thought I could just redirect makemkvcon to makemkvcon.exe on WSL with an
+# alias from a script, but we can't have nice things.)
+
+# todo how do i make sure the windows node script calls the windows ruby
+# interpreter? or... no, the ruby script itself will call its own interpreter,
+# but the interpreter depends on the environment it's running in, right? hmmm...
+# you don't have to specify the script, you can actually run the gem installed
+# using your WSL interpreter, you just have to specify the windows-native
+# interpreter to run it, but how...? is that something you can set as a bash
+# environment var in WSL that windows-native node will respect when calling ruby
+# scripts? can you do that with aliases? you might have to, since you can't
+# internallly change the node script's reference to a given ruby interpreter,
+# only externally.
+
+# mebbe... mebbe this is the way you should setup your WSL environment by
+# default? aliases for the windows-native interpreters AND their respective
+# package manager commands?
+
+# yes, the default interpreter that gets called is the first one found in your
+# PATH - and in WSL, that includes WSL and Powershell.
+
+# If mpv exists (*nix), set to mpv
+if [[ -x $(command -v "mpv") ]]; then
+
+	readonly MPV="mpv"
+
+# If mpv.exe exists (WSL), set to mpv.exe
+elif [[ -x $(command -v "mpv.exe") ]]; then
+
+	readonly MPV="mpv.exe"
+
+# No executable found
+else
+
+	write_host --error="mpv not found (is it in your path?)."
+	exit_script --error
+
+fi
+
+# Variables (Defaults)
+dry_run_mode="false"	# Flag used for post-processing.
+indir="."				# Dependency for outdir.
+itunes_mode="false"		# Flag used for post-processing.
+outdir="$indir"			# Outdir has to be global, and defaults to indir, thus indir is global too.
+save_opts="$@"			# Does NOT belong with global readonly's - must be global AND writable!
+
+main()
+{
+	watch_signals
+	confirm_root
+	get_options "$@"
+	exit_script
+}
+
+# Check for root EUID
+confirm_root()
+{
+	local _root_message
+
+	if [[ "$ROOT_REQUIRED" == true ]] && (( EUID != 0 )); then
+
+		_root_message="$(get_warning --page=ROOT)"
+
+		write_host --error="$_root_message"
+		exit_script --error
+
+	fi
+}
+
+# Exit
+exit_script()
+{
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		# Error exit
+		-e | --error )
+			invoke_cleanup
+			exit 1
+			;;
+
+		# Graceful exit
+		-g | --graceful )
+			invoke_cleanup
+			exit
+			;;
+
+		* )
+			write_host --error="Unknown option $i (${FUNCNAME[0]})"
+			invoke_cleanup
+			exit 1
+			;;
+
+	esac
+	done
+
+	# Default behavior (same as graceful exit) when run w/o options
+	invoke_cleanup
+	exit
+}
+
+# Check if command exists in PATH and is executable
+get_command()
+{
+	local _command_name
+
+	# Exit on error if no option specified
+	if [[ $# -eq 0 ]]; then
+
+		write_host --error="Missing option (${FUNCNAME[0]})"
+		exit_script --error
+
+	fi
+
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		# Command name
+		-n=* | --name=* )
+			_command_name="${i#*=}"
+			;;
+
+		# Unknown option
+		* )
+			write_host --error="Unknown option $i (${FUNCNAME[0]})"
+			exit_script --error
+			;;
+
+	esac
+	done
+
+	if ! [[ -x $(command -v "$_command_name") ]]; then
+
+		write_host --error="$_command_name not in PATH or not executable"
+		exit_script --error
+
+	fi
+}
+
+# Help
+get_help()
+{
+	local _help_message
+	local _page_name
+
+	# Defaults
+	_help_message="$(read_help SHORT)"
+
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		# Display a help page
+		-p=* | --page=* )
+			_page_name="${i#*=}"
+			_help_message="$(read_help "$_page_name")"
+			;;
+
+		# Unknown option
+		* )
+			write_host --error="Unknown option $i (${FUNCNAME[0]})"
+			exit_script --error
+			;;
+
+	esac
+	done
+
+	echo "$_help_message"
+}
+
+# Parse command-line
+get_options()
+{
+	# Options
+	local _chapter_opt
+	local _container_opt
+	local _debug_opt
+	local _dry_run_opt
+	local _extension_opt
+	local _max_height_opt
+	local _max_width_opt
+	local _outdir_option_protected
+	# local _limit_rate_opt
+	local _encoder
+	# local _subtitle_opt
+	local _crop_value
+	# local _modulus
+
+	# Defaults
+	_chapter_opt=					# unset by default
+	_container_opt=					# unset by default
+	_debug_opt=						# unset by default
+	_dry_run_opt=					# unset by default
+	_extension_opt=					# unset by default
+	_max_height_opt=				# unset by default
+	_outdir_option_protected=false
+	# _limit_rate_opt=				# unset by default
+	_encoder="x265"					# x264, x265, nvenc_h265 (Nvidia hardware encoding)
+	# _subtitle_opt=				# default (hard-coded, discard subs)
+	_crop_value="1"					# default (hard-coded, auto-crop, favors least extreme auto-cropping) todo leave note about relying on Handbrake's "auto-anamorphic" API to resolve issues of odd (non-mod16) crop values
+	# _modulus=2					# default (hard-coded, mod2, mod4, mod8, mod16)
+
+	# todo clean this up
+
+	# Display help message and exit if no option specified
+	if [[ $# -eq 0 ]]; then
+
+		get_help
+		exit_script
+
+	fi
+
+	# With getops, invalid options don't stop the processing - if we want to
+	# stop the script, we have to do it ourselves (exit in the right place).
+	while getopts "$GETOPTS_OPTSTRING" i; do
+	case $i in
+
+		\? )
+			write_host --error="Invalid option: -$OPTARG"
+			exit_script --error
+			;;
+
+		: )
+			write_host --error="Option -$OPTARG requires an argument"
+			exit_script --error
+			;;
+
+	esac
+	done
+
+	# Reset getopts
+	OPTIND=1
+
+	# Get values
+	while getopts "$GETOPTS_OPTSTRING" i; do
+	case $i in
+
+		# Chapter selection
+		c )
+			_chapter_opt="--chapters $OPTARG"
+			;;
+
+		# Crop values
+		C )
+			_crop_value="$OPTARG"
+
+			# todo ADD CHECK TO FORCE CORRECT TOP:BOTTOM:LEFT:RIGHT SYNTAX,
+			# batch-transcode-video's default behavior is to take any value
+			# that ISN'T valid and take it to mean "auto-crop, no matter what,
+			# using the most conservative conflicting crop value"
+			;;
+
+		# Encoder
+		e )
+			_encoder="$OPTARG"
+
+			# Exit on error if invalid optarg
+			if [[ "$_encoder" != x264 ]] && [[ "$_encoder" != x265 ]]; then
+
+				write_host --error="Invalid optarg: $OPTARG" # todo flesh this out
+				exit_script --error
+
+			fi
+			;;
+
+		# Indir
+		i )
+			indir="$OPTARG"
+
+			# While outdir is initially set to indir by default, we always
+			# give the (optional) -o option preferential treatment if it is
+			# explicitly set, whether it is set before or after -i option.
+			if [[ "$_outdir_option_protected" == false ]]; then
+
+				outdir="$indir"
+
+			fi
+			;;
+
+		# iTunes-compatible MP4/M4V output
+		I )
+			# Use MP4 container
+			_container_opt="--mp4"
+
+			# Enable iTunes-related post-processing
+			itunes_mode="true"
+			;;
+
+		# Low-res, suitable for testing render settings quickly
+		l )
+			_max_height_opt="--max-height 144"
+			;;
+
+		# Dry run
+		n )
+			_dry_run_opt="--dry-run"
+			dry_run_mode="true"
+			;;
+
+		# Outdir
+		o )
+			outdir="$OPTARG"
+			_outdir_option_protected=true
+			;;
+
+		# Type
+		t )
+			if [[ "$OPTARG" == dvd ]]; then
+
+				# _limit_rate_opt="--limit-rate 30"
+
+				# todo on second thought, i don't think there's any benefit to
+				# this - DVD-type source video will have a defacto peak rate
+				# of 30 just because of the nature of DVD video, anyway, so
+				# you don't need to specify this manually for them
+
+				local _placeholder
+
+			fi
+			;;
+
+		# Verbose output
+		V )
+			_debug_opt="--debug"
+			;;
+
+	esac
+	done
+
+	# Reset getopts
+	OPTIND=1
+
+	# Parse options
+	while getopts "$GETOPTS_OPTSTRING" i; do
+	case $i in
+
+		# Help message
+		h )
+			get_help
+			;;
+
+		# Process indir
+		i )
+			# Check if dependencies exist in PATH and are executable
+
+			# Dependencies: Main scripts | Linux AND Windows transcoding stacks.
+			# We scan for these AFTER we learn whether our ruby and node
+			# interpreters are running as Linux or native Windows binaries. todo
+			# will you have to worry about Linux and Windows CR/LF line endings
+			# breaking cross-interpreter compatability in your scripts,
+			# depending on which interpreter's package manager they were
+			# originally downloaded through? answer: yes. yes, you will. On the
+			# windows side of things, you only have the Windows path to worry
+			# about, which will resolve your interpreters and scripts correctly,
+			# but in WSL, you have both the Windows AND Linux paths to worry
+			# about, so you need to give priority - you can do so temporarily
+			# for the sake of this script, by providing the full *linux*-style
+			# path to the windows-native interpreters and windows script dirs -
+			# this will ensure that whether you're interpreting using a windows
+			# env path or a linux env path, your windows tools are being called.
+			# tldr; you don't WANT to use windows-native interpreters to run
+			# linux files, you want to use windows-native interpreters to run
+			# windows files.
+			get_command --name="batch-transcode-video"	# via npm i batch-transcode-video -g. Batch-control for transcode-video. nvm recommended for node version control.
+			get_command --name="transcode-video"		# via gem install video_transcoding. Wrapper for our primary transcoding tool, Handbrake.
+
+			# Dependencies: batch-transcode-video | Linux AND Windows transcoding stacks
+			get_command --name="node"					# nvm recommended for node version control.
+
+			# Dependencies: transcode-video | Linux AND Windows transcoding stacks
+			get_command --name="ruby"					# rvm or rbenv (via rbenv-installer) recommended for ruby version control. | todo to look for ruby.exe, it needs to be directly in the windows path, not a shim of it, but the exe istelf. version managers put shims instead of executables into the path, so a native ruby version manager on windows would break ruby.exe lookups here that aren't aware what version of ruby is installed. addendum: ...could ask for a shell env var to be set for a windows version of ruby, like so: RUBY_WIN="/mnt/c/Ruby26-x64"
+			get_command --name="HandBrakeCLI"			# via apt install handbrake-cli.
+			get_command --name="ffmpeg"					# Recent versions have better x265 support.
+			get_command --name="mkvpropedit"			# via apt install mkvtoolnix.
+			get_command --name="mp4track"				# via apt install mp4v2-utils. | note, if you're having trouble locating the package in any repo: the source is still available on Google's code archive. to compile on linux, you need the additional autogen, autoconf and libtool build packages. here are the commands: { $ git clone https://github.com/mp4v2/mp4v2.git ~/mp4v2 \ cd ~/mp4v2 \ autoreconf -i \ ./configure \ make CXXFLAGS='-fpermissive' \ make install } (note that 'sudo checkinstall' bricked your WSL environment in your tests - procede with EXTREME caution when deviating from the suggested commands!). to compile on windows, simply clone the project, import it into Visual Studio (let it update the project files), and build. however, since you're compiling both an executable and a library, on linux you may find that your library exists, but the executable can't find it. if that happens then you just need to go through the extra step of linking the library manually, and you can do that by adding the pibrary's path to your dynamic loader's global search path list. once you do that, update /etc/ld.so.cache by the folowing command: $ sudo ldconfig
+			get_command --name="$MPV"					# Used for optional crop-previewing. todo need to set this to either mpv or mpv.exe like you do in other WSL scripts
+
+			# todo hangon... i'm assuming that running exe's means also running windows-native interpreters, but is that true? what does don recommend?
+
+			# Dependencies: iTunes post-processing
+			get_command --name="batch-mp42m4v"			# Batch control for mp42m4v.
+
+			# Dependencies: batch-mp42m4v
+			get_command --name="mp42m4v"				# Renames certain *.mp4 files to *.m4v. Used for compatibility with certain older Apple products, like older versions of AppleTV for example.
+
+			# Dependencies: mp42m4v
+			get_command --name="ffprobe"				# via apt install ffmpeg. Used in iTunes post-processing.
+			get_command --name="xmllint"				# via apt install libxml2-utils. Used in iTunes post-processing.
+
+			# NOTE: DEPRECATING -I OPT BY HARD-CODING ITS FUNCTIONALITY BELOW
+			# todo set these as defaults somewhere else and remove the I opt? or
+			# mebbe just leave it as a deprecated, undocumented option
+
+			# Use MP4 container
+			_container_opt="--mp4"
+
+			# Enable iTunes-related post-processing
+			itunes_mode="true"
+
+			# From the batch-transcode-video manual:
+
+			# If you provide anything other than an actual crop value (e.g. 1)
+			# as the argument for this option, then when crop detection
+			# returns conflicting crop values it will just use the least extreme
+			# crop value and continue transcoding.
+			
+			# From Jon:
+
+			# This autocrop feature should work flawlessly 99% of the time, but
+			# you may run into trouble with some special features that
+			# intermittently cut between interview sessions at one aspect ratio,
+			# and the film content they're discussing at an entirely different
+			# aspect ratio (this is pretty common). Generally however, you can
+			# expect your source video to have a single aspect ratio if you're
+			# just dealing with film and tv shows. Extra features that give you
+			# trouble can be initially processed in the entire batch, then
+			# manually inspected and given the correct crop values on an
+			# individual basis. todo add this as a "best practices" note up
+			# above, also todo writeup a best practices section
+
+			# todo in best practices section, make note that subtitles are
+			# discarded because it's expected that SRTs will be part of the
+			# processing pipeline for "soft" subtitles, and SRTs are a separate
+			# output - separate outputs should be handled by separate tools.
+			# should probably write up a tool that will merge SRT files back
+			# into your video as soft subs, which unlike SRTs, are compatible
+			# with iTunes. if your source video had vobsubs, your job is a LOT
+			# harder, but not impossible - vobsub to ps1, ps1 to pgm image
+			# sequences, and convert that to SRTs using OCR. clean up manually
+			# and test sync in VLC, and you should have a viable SRT for merging
+			# as a soft sub. (really, while the videos are designed to be
+			# itunes-compatible, we don't actually expect that people will be
+			# using itunes to play them, so there's also no expectation that
+			# SRTs have to be merged into the video file - just keep them in the
+			# same folder, which is far more useful - we're technically not
+			# breaking iTunes compatibility since the video still plays, and the
+			# SRTs can be merged at any time if you really want to play your
+			# video in itunes that bad).
+
+			# Uncomment the line below to keep subtitles (if your source video
+			# came from a DVD, vobsubs will break your hard-coded iTunes
+			# compatability):
+
+			# _subtitle_opt="--add-subtitle all"
+
+			# Uncomment the line below to disable cropping (keeps black bars
+			# in original video):
+
+			# _crop_value="0:0:0:0"
+
+			# todo hand on... if you're doing your entire hardware transcoding
+			# stack in windows, using native windows binaries... and the only
+			# fucking thing this script does is populate the option string...
+			# why don't you just fucking populate it in windows powershell with
+			# a powershell script? ...yeh, i think in the end, is it gonna be
+			# easier to write a barebones powershell wrapper script for
+			# batch-transcode-video, or rewrite this monster to organize
+			# interpreters in a hybrid environment? i gotta let you know, one of
+			# those is much more straightforward and much less error-prone, not
+			# to mention easier to maintain and more intuitive to use from a
+			# user's perspective. shell script for linux-native binaries.
+			# powershell script for windows-native binaries. so much less you
+			# have to think about. so much more reliable. populating an
+			# option-string - that's all that's required for your minimum viable
+			# product. todo: in the future, you can just convert your wrapper
+			# into python or something cross-platform. use the same fucking
+			# wrapper for both environments, both encoding stacks. there, you've
+			# decoupled linux from windows.
+
+			# Batch control. Note how some vars are deliberately unquoted to
+			# provide proper word-splitting. Also note that the decomb filter is
+			# forced (it is default in the GUI version of Handbrake, but not the
+			# CLI version), and that subtitles are discarded (they are expected
+			# to be backed up separately, which is particularly important if
+			# you're cleaning up SRTs generated from performing OCR on vobsubs -
+			# the main assumption being made here is that someone who's using
+			# this script has a mostly DVD collection, and does not wish to
+			# include DVD subtitles in the initial output since it would break
+			# the "universal" and "long-term availability" principles that
+			# iTunes compatability brings).
+			batch-transcode-video \
+				$_debug_opt \
+				--diff \
+				--flatten \
+				--nocrop \
+				--input "$indir" \
+				--output "$outdir" \
+				-- \
+				$_dry_run_opt \
+				$_chapter_opt \
+				$_container_opt \
+				$_max_height_opt \
+				--add-audio all \
+				--audio-width main=double \
+				--audio-width other=surround \
+				--crop detect \
+				--constrain-crop \
+				--fallback-crop minimal \
+				--handbrake-option optimize \
+				--handbrake-option comb-detect \
+				--handbrake-option decomb \
+				--handbrake-option encoder="$_encoder"
+
+				# todo crop value option now has useful minimal and fallback
+				# features in transcode_video!! check them out and update this
+				# script to take advantage of them, this is what you've been
+				# wanting!
+
+				# todo should validate all your options with the latest version
+				# of your transcode tools
+
+				# for --audio-width main=double, this is mainly a safety
+				# guarantee - in the unlikely event your source video has
+				# nothing but surround audio, you're guaranteed to have at
+				# least one AAC stereo track for playback on Apply devices
+				# (this is transcode-video's default behavior anyway:).
+
+					# From https://github.com/donmelton/video_transcoding/:
+
+					# By default, the main audio track is transcoded in AAC
+					# format and, if the original is multi-channel surround
+					# sound, in Dolby Digital AC-3 format. Meaning the output
+					# can contain two tracks from the same source in different
+					# formats. So, main audio output is "wide" enough for
+					# "double" tracks.
+
+				# todo have a HERE doc explaining what each option (both user-
+				# specified and hard-coded) does?
+
+				# By default, the transcode-video tool automatically burns any
+				# forced subtitle track it detects into the output video
+				# track.
+
+				# I let transcode-video automatically burn any forced
+				# subtitles into the output video track when the "forced" flag
+				# is enabled in the original.
+
+				# For a few problematic videos, I have to apply options like
+				# --force-rate 23.976 --filter detelecine. But that's rare.
+
+				# by default itunes-transcode will DISCARD subtitles. this is
+				# designed to encourage the user to save the subtitles
+				# separately.
+
+				# If and when you do have a subtitle in text format,
+				# specifically SubRip .srt format, you can easily add it to your
+				# output video from an external file:
+				
+				# transcode-video --add-srt "/path/to/Subtitle.srt" "/path/to/Movie.mkv"
+
+				# So then the general workflow when ready to add soft subs would
+				# be to convert your mp4 to mkv, add srts, and then convert your
+				# video back to mp4 again. You can automate this whole workflow
+				# in a single script.
+
+				# by default itunes-transcode will NOT preserve the relative
+				# directory structure in the output directory. you can change
+				# this behavior by deleting the --flatten option for batch-
+				# transcode-video, but this is not recommended. this is mostly
+				# to encourage users to output all of their Handbrake log
+				# files into the same directory, which query-handbrake-log can
+				# use as an argument to mine and sort multiple logs for useful
+				# information. (0.3.0)
+
+				# --diff default: false. by default, if batch-transcode-video
+				# detects an identical file in the destination directory, it
+				# will generate an error. this way, we avoid generating errors.
+				# additionally, there used to be a much more serious bug where
+				# this error also causes batch-transcode-video to DELETE the
+				# identical file in the destination video! setting --diff
+				# internally worked around this issue, but though that's been
+				# patched, this option continues to be useful and help generate
+				# fewer false positives for errors. we're basically telling
+				# batch-transcode-video that if output from a given source file
+				# is already in the destination from a previous run, 1) don't
+				# waste time redoing the encode and 2) don't treat it as an
+				# error.
+
+				# Add the following line to manually control crop values"
+				# --force "$_crop_value"
+
+				# Well, consider DVDs, which have VobSubs, which you're trying
+				# to preserve, which might not display correctly if you crop
+				# the video. You'd have to convert the subs to SRT or download
+				# new ones.
+
+				# So keep the black bars AND the vobsubs, or ditch the black
+				# bars and convert the vobsubs.
+
+				# all told, the simplest solution is usually the best one -
+				# keep original the vobsubs until you find a command-line tool
+				# that can convert them into SRT subs.
+
+				# use ffmpeg to extract vobsubs.
+
+				# use an optical character recognition (OCR) tool to convert the
+				# bitmap images to text.
+
+				# use a converter tool to convert the images to SRT.
+
+				# tldr convert your subs using something with an OCR, like
+				# vobsub2srt, subrip, suprip, or your own OCR workflow
+				# inspired from this article:
+
+				# http://virtuallyhyper.com/2013/09/combine-vobsub-subidx-format-subtitles-single-subrip-srt-format-file/
+
+				# HEY-O i have command line-assisted OCR-generated SRT
+				# spellcheck? yes, please! command-line spellcheck, woohoo!
+
+				# also, should make it a policy to keep archival backups of
+				# your original vobsub rips, particularly useful if you need
+				# to go back and re-convert vobsubs in foreign languages that
+				# were scanned/converted badly by your OCR.
+
+				# A note on using detect-crop to remove black bars:
+
+				# When input is a disc image directory instead of a single
+				# file, the detect-crop tool doesn't use FFmpeg, nor does it
+				# print out commands to preview the crop.
+
+				# todo Hmmm... for the purposes of compressing data, if you
+				# extract and keep the original vobsub rips around, you don't
+				# have to worry about converting them now. just crop and
+				# transcode away. so for now, just worry about a batch-control
+				# subtitle ripper that complements your batch-control
+				# transcoder! (and edit this script so that it discards subs, or
+				# extracts them - i dunno, does Don's transcode-video support
+				# extracting subs, rather than just burning them in?)
+
+				# ADD NEW LINUX-ONLY DEPENDENCY CHECKS FOR TRANSCODE,
+				# SUBTITLERIPPER, TESSERACT, ASPELL, VOBSUB2SRT PACKAGES, THEY
+				# HAVE THE TOOLS YOU NEED FOR TURNING EXTRACTED VOBSUBS INTO
+				# OCR- FRIENDLY IMAGE SEQUENCES. also grab that sed snippet
+				# from your evernote article for your spellcheck workflow.
+				# hmmm... and you can read pretty fast if it's just one-liners
+				# w/ the benefit of a quicklook workflow, that would make
+				# visual inspection of the image sequence dump a breeze, and
+				# it saves on typing, so you should probably add that as part
+				# of your workflow, too.
+
+				# ALSO ADD LINUX-ONLY DEPENDENCY CHECKS FOR MKVEXTRACT, ETC
+				# FOR VOBSUB RIPPING TOOLS
+
+				# oh huh yeah, since you're extracting, converting and then
+				# re-inserting subs, you probably don't need MP4 output until
+				# the subtitle reassembly step, so why don't you just stay in
+				# MKV until then (you don't need itunes-transcode to output
+				# MP4 files right off the bat, since these files generated
+				# will be missing their subtitles and thus won't be the final
+				# ones that will be played - until your FINAL output is ready,
+				# stay in a more flexible MKV workflow) - this means now might
+				# be a good time to change the scope of itunes-transcode's -I
+				# option in the ways suggested at the top...
+
+				# (you can count subtitle streams and grab index numbers using
+				# ffprobe -show_streams and xmllint, just feed that to
+				# mkvextract, no need for a loop - except for building
+				# mkextract's option string)
+
+				# Extract all vobsubs from MKV example into sub/idx pairs (in
+				# tracks extraction mode):
+				#   $ mkvextract <infile.mkv> tracks <stream_id>:<outfile_base>
+
+				# Extract all vobsub streams into same container file:
+				#   $ mkvextract infile.mkv tracks 2:two-vobsub-tracks 3:two-vobsub-tracks
+
+				# then just do your thing with the subtitle containers! split
+				# them into raw streams, split THOSE into image sequences, run
+				# OCR on THOSE and then patch everything up w/ a raw SRT.
+				# spellcheck optional, but very recommended, ESPECIALLY before
+				# you decide to re-merge the subtitles into the video.
+
+				# From mkvextract doc:
+				
+				# VobSub(tm) subtitles will be written as SUB files along with
+				# the respective index files, as IDX files.
+
+				# rename mp4-to-m4v and batch-mp4-to-m4v to mp42m4v and batch-
+				# mp42m4v?
+
+				# the vobsub2srt readme includes some great tips and workflow
+				# ideas, probably model your own scripts of off vobsub2srt
+
+				# hm, okay, looks like tessract 3 is on brew, but not 4 (which
+				# has the new neural net engine), so you'll have to build that
+				# manually
+
+				# you know what? go ahead and make it your policy to dump your
+				# video rips, but KEEP your original vobsub rips! just in case
+				# you need to re-master them using better methods later.
+
+				# huh, okay, mkvextract (from the mkvtoolnix package?) can
+				# dump your vobsubs for you.
+
+			# ************************************************************************************************************************************
+			# *     ADD _ANY_ POST-BATCH OPERATION CODE, SUCH AS CLEANUP AND POST-PROCESSING, TO TRAP EXIT - ADDING IT HERE, IT WILL NOT RUN     *
+			# ************************************************************************************************************************************
+
+			# WARNING: Nothing after the above batch-transcode-video call will
+			# run, when the node.js script completes its job it exits this
+			# entire script for some reason I don't know because I'm not a
+			# node.js developer.
+			;;
+
+		# Print version
+		v )
+			get_help --page=VERSION
+			;;
+
+	esac
+	done
+}
+
+# Handle trapped signals
+get_signals()
+{
+	# Exit on error if no option specified
+	if [[ $# -eq 0 ]]; then
+
+		write_host --error="Missing option (${FUNCNAME[0]})"
+		exit_script --error
+
+	fi
+
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		# Workaround for continuing script after batch-transcode-video job
+		EXIT )
+
+			# Reset getopts
+			OPTIND=1
+
+			# Shift arguments by one, since getopts will stop at the first
+			# non-option argument (in this case, it will stop at get_signal's
+			# first arg, EXIT)
+			shift
+
+			# Get values
+			while getopts "$GETOPTS_OPTSTRING" i; do
+			case $i in
+
+				# Batch operation post-processing
+				i )
+					# Post-processing for iTunes-ready output (Do not do this
+					# step if -n was used)
+					if [[ "$itunes_mode" == "true" ]] && [[ "$dry_run_mode" == "false" ]]; then
+
+						write_host --output="iTunes-friendly output enabled, renaming some MP4 files as M4V for older Apple devices..."
+
+						# From is-m4v doc:
+
+						# This script uses the following criteria from
+						# HandBrake for deciding which extension to use:
+
+						# "For MP4 files, HandBrake will automatically use the
+						# extension M4V when you pass-through audio (AC3),
+						# use SRT subtitles or have chapter markers enabled."
+
+						# Further reading:
+						# https://handbrake.fr/docs/en/latest/technical/containers.html
+
+						# Batch control. Note how we're searching for MP4
+						# files to analyze in outdir, rather than indir!
+						batch-mp42m4v \
+							-i "$outdir" \
+							-o "$outdir"
+
+						write_host --output="Renaming done."
+
+					fi
+					;;
+
+			esac
+			done
+
+			# ************************************
+			# *     PUT ADDITIONAL CODE HERE     *
+			# ************************************
+
+			exit_script
+			;;
+
+		INT )
+			write_host --error="Program interrupted by user"
+			exit_script --error
+			;;
+
+		TERM )
+			write_host --error="Program terminated"
+			exit_script
+			;;
+
+		* )
+			write_host --error="Terminating on unknown signal"
+			exit_script --error
+			;;
+
+	esac
+	done
+}
+
+# Print warnings
+get_warning()
+{
+	local _page_name
+	local _warning_message
+
+	# Exit on error if no option specified
+	if [[ $# -eq 0 ]]; then
+
+		write_host --error="Missing option (${FUNCNAME[0]})"
+		exit_script --error
+
+	fi
+
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		# Display a specific warning
+		-p=* | --page=* )
+			_page_name="${i#*=}"
+			_warning_message="$(read_warning "$_page_name")"
+			;;
+
+		# Unknown option
+		* )
+			write_host --error="Unknown option $i (${FUNCNAME[0]})"
+			exit_script --error
+			;;
+
+	esac
+	done
+
+	echo "$_warning_message"
+}
+
+# Perform pre-exit housekeeping
+invoke_cleanup()
+{
+	return
+}
+
+# Help pages
+read_help()
+{
+# Exit on error if no option specified
+if [[ $# -eq 0 ]]; then
+
+	write_host --error="Missing option (${FUNCNAME[0]})"
+	exit_script --error
+
+fi
+
+# Split on $@ array instead of spaces
+for i; do
+case $i in
+
+# Default help message
+SHORT )
+echo """\
+$PROGNAME ver. $VERSION
+Wrapper script for batch-transcode-video. Produces space-efficient, high-
+quality H265 videos that are compatible with iTunes. Reduces combined option
+scope of batch-transcode-video and transcode-video from 50 to 9.
+
+Usage: $PROGNAME [-IVhlnv] -i indir [-o outdir] [-c chapter[-chapter]] [-e encoder] [-t type]
+
+todo get number of options back under control by removing x264 support (it's
+there temporarily for comparing x264 and x265 output), by automatically
+detecting if source video stream codec is DVD video (internally, automatically
+set '--pfr 30'), and by removing MKV support (deprecates -I option by making
+it the default behavior).
+
+Options:
+-C crop        Force crop for ALL videos in indir (TOP:BOTTOM:LEFT:RIGHT).
+-I             iTunes-ready MP4/M4V output (default: MKV).
+-V             Verbose output (disables progress bars).
+-c chapter(s)  Select chapters, single or range (default: all).
+-e encoder     Select encoder (x264 and x265 supported, default: x265).
+-h             Display this help message and exit.
+-i indir       Indir.
+-l             Low-res, sets max height to 144 (suitable for quick tests).
+-n             Dry run.
+-o outdir      Outdir (default: \".\").
+-t type        Interpret source media as TYPE (internally sets --limit-rate 30, recommended for DVDs) (dvd or non-dvd).
+-v             Display version.
+"""
+
+# Append a note to the default help message if the script requires root
+# privileges.
+if [[ "$ROOT_REQUIRED" == true ]]; then
+	local _root_message
+
+	_root_message="$(get_warning --page=ROOT)"
+
+	echo "NOTE: $_root_message"
+fi
+;;
+
+# Display version
+VERSION )
+echo """\
+$VERSION
+"""
+;;
+
+# Unknown option
+* )
+write_host --error="Unknown option $i (${FUNCNAME[0]})"
+exit_script --error
+;;
+
+esac
+done
+}
+
+# Warning messages
+read_warning()
+{
+# Exit on error if no option specified
+if [[ $# -eq 0 ]]; then
+
+	write_host --error="Missing option (${FUNCNAME[0]})"
+	exit_script --error
+
+fi
+
+# Split on $@ array instead of spaces
+for i; do
+case $i in
+
+# Root required
+ROOT )
+echo """\
+You must be the superuser to run this script.
+"""
+;;
+
+# Unknown option
+* )
+write_host --error="Unknown option $i (${FUNCNAME[0]})"
+exit_script --error
+;;
+
+esac
+done
+}
+
+# Trap signals
+watch_signals()
+{
+	trap "get_signals EXIT $save_opts" EXIT # workaround for continuing script after batch-transcode-video job
+	trap "get_signals TERM" TERM HUP
+	trap "get_signals INT" INT
+}
+
+# Write to stdout or stderr
+write_host()
+{
+	local _message
+	local _output
+	local _separator
+	local _stream
+	local _tag
+	local _tag_option_protected
+
+	# [ TAG > SEPARATOR > MSG ] = OUTPUT
+
+	# Defaults
+	_separator=": "
+	_stream=STDOUT
+	_tag_option_protected=false
+
+	# Error if no option specified
+	if [[ $# -eq 0 ]]; then
+
+		_tag="${PROGNAME} [error]"
+		_message="Missing option (${FUNCNAME[0]})"
+		_output="${_tag}${_separator}${_message}"
+		echo "$_output" >&2
+		exit_script --error
+
+		# Equivalent:
+		#   write_host --error="Missing option (${FUNCNAME[0]})"
+		#   exit_script --error
+
+	fi
+
+	# Split on $@ array instead of spaces
+	for i; do
+	case $i in
+
+		# Debug message
+		-d=* | --debug=* )
+			# We always give the (optional) --no-tag option preferential
+			# treatment if it is explicitly used, whether it is used before or
+			# after this option.
+			if [[ "$_tag_option_protected" == false ]]; then
+
+				_tag="${PROGNAME} [debug]"
+
+			fi
+
+			_message="${i#*=}"
+			;;
+
+		# Error output. write_host can give you error messages for sorting
+		# convenience, but doing so WILL NOT RETURN AN ERROR EXIT CODE, since
+		# it is a successful operation. Thus, this should typically be
+		# invoked, then followed up by manually returning an error exit code.
+
+		# Example:
+		#   write_host --error="Unknown option $i (${FUNCNAME[0]})"
+		#   exit_script --error
+
+		-e=* | --error=* )
+			# We always give the (optional) --no-tag option preferential
+			# treatment if it is explicitly used, whether it is used before or
+			# after this option.
+			if [[ "$_tag_option_protected" == false ]]; then
+
+				_tag="${PROGNAME} [error]"
+
+			fi
+
+			_message="${i#*=}"
+			_stream=STDERR
+			;;
+
+		# Print messages without tag prefix
+		-n | --no-tag )
+			_tag=
+			_tag_option_protected=true
+			_separator=
+			;;
+
+		# Normal output
+		-o=* | --output=* )
+			# We always give the (optional) --no-tag option preferential
+			# treatment if it is explicitly used, whether it is used before or
+			# after this option.
+			if [[ "$_tag_option_protected" == false ]]; then
+
+				_tag="${PROGNAME}"
+
+			fi
+
+			_message="${i#*=}"
+			;;
+
+		# Unknown option
+		* )
+			_tag="${PROGNAME} [error]"
+			_message="Unknown option $i (${FUNCNAME[0]})"
+			_output="${_tag}${_separator}${_message}"
+			echo "$_output" >&2
+			exit_script --error
+			;;
+
+	esac
+	done
+
+	# Compose message
+	_output="${_tag}${_separator}${_message}"
+
+	# Write to stdout
+	if [[ "$_stream" == STDOUT ]]; then
+
+		echo "$_output"
+
+	# Write to stderr
+	elif [[ "$_stream" == STDERR ]]; then
+
+		echo "$_output" >&2
+
+	fi
+}
+
+# Main logic
+main "$@"

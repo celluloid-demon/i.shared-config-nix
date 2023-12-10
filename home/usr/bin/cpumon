@@ -1,0 +1,67 @@
+#!/bin/bash
+
+# PURPOSE: Script to check temperature of CPU cores and report/shutdown if specified temperatures exceeded
+# AUTHOR: feedback[AT]HaveTheKnowHow[DOT]com
+
+# Expects two arguments:
+#    1. Warning temperature
+#    2. Critical shutdown temperature
+#    eg. using ./cpu-temp-shutdown.sh 20 80
+#        will warn when temperature of one or more cores hit 20 degrees and shutdown when either hits 80 degrees.
+
+# IF RUN W/O ARGUMENTS, SERVER WILL SHUTDOWN
+
+# Change the strings ">>/home/htkh" as required.
+# Substitute string "myemail@myaddress.com" with your own email address in the string which starts "/usr/sbin/ssmtp myemail@myaddress.com".
+
+# Assumes output from sensors command is as follows:
+#
+# coretemp-isa-0000
+# Adapter: ISA adapter
+# Core 0:      +35.0 C  (high = +78.0 C, crit = +100.0 C)  
+#
+# coretemp-isa-0001
+# Adapter: ISA adapter
+# Core 1:      +35.0 C  (high = +78.0 C, crit = +100.0 C) 
+#
+# If not then modify the commands str=$(sensors | grep "Core $i:") & newstr=${str:14:2} below accordingly.
+
+# Declare constants
+readonly LIB="$HOME/lib"
+readonly ULIB="$HOME/usr/lib"
+
+# Source libraries
+source "$ULIB/stdutils.sh"
+
+# Main logic
+echo 'CPU warning limit set to '$1'.'
+echo 'CPU shutdown limit set to '$2'.'
+echo ''
+sensors # Print sensors output, nothing more
+
+for i in 0 1
+do
+
+  str=$(sensors | grep "Core $i:")      # MODIFY ACCORDING TO YOUR SENSORS OUTPUT
+  newstr=${str:17:2}                    # MODIFY ACCORDING TO YOUR SENSORS OUTPUT
+
+  if [[ ${newstr} -ge "$1" ]]
+  then
+     echo $(date)': WARNING: CORE' $i 'TEMPERATURE EXCEEDED' $1 '=>' $newstr  >>/home/jonathan/var/log/cpu-temp-shutdown.log
+  fi
+  
+  if [[ ${newstr} -ge "$2" ]]
+  then
+    echo $(date)': CRITICAL: CORE' $i 'TEMPERATURE EXCEEDED MAX' $2 '=>' $newstr  >>/home/jonathan/var/log/cpu-temp-shutdown.log
+   #echo $(date)': CRITICAL: SENDING EMAIL...'                                    >>/media/userdata/scripts/cpu-temp-shutdown.warning.log
+    echo $(date)': CRITICAL: SHUTTING DOWN THE SERVER!'                           >>/home/jonathan/var/log/cpu-temp-shutdown.log
+    /sbin/shutdown -h now
+   #/usr/sbin/ssmtp jonathandudrey@gmail.com </media/userdata/scripts/cpu-temp-shutdown.msg.txt
+   #echo $(date)': CRITICAL: Email Sent.....'
+    exit
+  else
+    echo 'Core '$i' temperature OK at' $newstr'.'
+  fi
+done
+
+echo 'Both CPU cores are within limits. Yay, everything is okay!'

@@ -1,0 +1,33 @@
+#!/bin/bash
+
+# Export jail archives to be replicated
+
+SCPTNAME=export-jails
+
+LOGDIR=/mnt/tank1/ds1/redshirt/log/freenas/
+LOGFILE=$SCPTNAME.log
+LOG=$LOGDIR/$LOGFILE
+
+IOCAGEDIR=/mnt/tank0/iocage/
+IOCAGE_IMAGES=$IOCAGEDIR/images
+BACKUPDIR=/mnt/tank0/ds0/spock/backup/iocage/images/ # note that 'backup' is NOT plural! these are backups that get replicated with kirk
+JAIL=
+
+# mysql-moobee
+JAIL=mysql-moobee
+echo >> "$LOG"
+echo "---Starting backup of FreeNAS jail:$JAIL---" >> "$LOG"
+echo >> "$LOG"
+echo "Backing up jail..." >> "$LOG"
+echo $(date) >> "$LOG"
+iocage stop $JAIL >> "$LOG"
+iocage export $JAIL >> "$LOG"
+iocage start $JAIL >> "$LOG"
+echo "Deleting old backups..." >> "$LOG"
+echo $(date) >> "$LOG"
+rm $BACKUPDIR/$JAIL* >> "$LOG"
+echo "Moving current backup to storage folders..." >> "$LOG"
+echo $(date) >> "$LOG"
+mv -v $IOCAGE_IMAGES/$JAIL* $BACKUPDIR/ >> "$LOG"
+# cp -v $IOCAGE_IMAGES/$JAIL* $BACKUPDIR/ >> "$LOG"
+echo "Done!"

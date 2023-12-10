@@ -1,0 +1,32 @@
+#!/bin/bash
+# ---------------------------------------------------------------------------
+# vbox-server-ubt.sh - Start VM "server-ubt".
+
+# This script starts VIRTUAL_MACHINE (in headless mode).
+
+# Usage: vbox-server-ubt.sh
+
+# Revision history:
+# 2015-01-12 Minor formatting corrections
+# 2014-04-08 Created
+# ---------------------------------------------------------------------------
+
+# Declare constnats
+readonly LIB="$HOME/lib"
+readonly ULIB="$HOME/usr/lib"
+readonly VIRTUAL_MACHINE="$1"
+
+# Source libraries
+source "$ULIB/stdutils.sh"
+
+# Define functions
+main() {
+  start "$VIRTUAL_MACHINE"
+}
+
+start() {
+  vboxmanage startvm "$1" --type headless
+}
+
+# Main logic
+main

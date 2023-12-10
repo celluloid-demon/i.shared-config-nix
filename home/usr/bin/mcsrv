@@ -1,0 +1,59 @@
+#!/bin/bash
+# ---------------------------------------------------------------------------
+# minecraft.sh - Starts the Minecraft server.
+
+# Usage: minecraft.sh <server root directory> <launch script> <screen session name>
+
+# server root directory
+#   If you want shorter path names, then this should be a symbolic link in the
+#   home directory. Example: "~/se"
+
+# launch script
+#   ...
+
+# session name
+#   This should be no more than four or five characters. Example: "se"
+
+# Revision history:
+# 2015-01-12 Added arguments
+# 2013-12-20 Created
+# ---------------------------------------------------------------------------
+
+# Declare constants
+readonly LIB="$HOME/lib"
+readonly MC_DIR="$1"
+readonly MC_LAUNCHER="$2"
+readonly SESSION="$3"
+readonly ULIB="$HOME/usr/lib"
+
+# Source libraries
+source "$ULIB/stdutils.sh"
+
+# Define functions
+main() {
+  hostlock
+  echo "Dummy."
+
+# minecraft "$MC_DIR" "$MC_LAUNCHER" "$SESSION"
+}
+
+minecraft() {
+  echo "Starting server..."
+  echo ""
+
+  screen -dmS "$3" sh -c "cd $1; source $2; exec bash"
+
+  echo "Done!"
+  echo ""
+}
+
+# Main logic
+main
+
+# ---------------------------------------------------------------------------
+
+# Examples of using tmux as the backend, instead of screen.
+
+# tmux new-session -d -s 'servers'
+# tmux new-window -t 'servers:2' -n cc3 'cd ~/cc3; ./start.sh'
+# tmux new-window -t 'servers:1' -n ndd 'cd /media/nfs/userdata/games/minecraft/nawdigdawg-1.5.2; ./start.sh'

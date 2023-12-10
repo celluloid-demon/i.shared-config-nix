@@ -1,0 +1,6 @@
+#!/bin/bash
+
+# WSL-specific helper script to mount/unmount cdrom drive to linux subsystem in
+# Windows (only NTFS drives are automounted in WSL).
+
+sudo umount /mnt/cdrom

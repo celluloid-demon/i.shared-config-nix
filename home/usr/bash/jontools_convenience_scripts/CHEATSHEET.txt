@@ -1,0 +1,44 @@
+- Check the state of a hard disk
+	$ sudo hdparm -C /dev/sdX
+
+- Set hard disk spindown timer to 2:30 (30 units of 5 seconds)
+	$ sudo hdparm -S 30 /dev/sdX
+
+	Note: A drive's power management features must ALLOW spindown for the spindown time to apply, and follows its own setting under option -B (values 1-127 favor low power over performance, and allow spindown; values 128 and up favor performance and do not allow spindown - check your device's current power management setting with 'hdparm -I /dev/sdX | grep level').
+
+	From the hdparm man page on -S:
+		Put the drive into idle (low-power) mode, and also set the standby (spindown) timeout  for  the  drive. This  timeout  value  is used by the drive to determine how long to wait (with no disk activity) before turning off the spindle motor to save power.  Under such circumstances, the drive may take as  long  as 30  seconds  to respond to a subsequent disk access, though most drives are much quicker.  The encoding of the timeout value is somewhat peculiar.  A value of zero means "timeouts are disabled":  the  device will not automatically enter standby mode.  Values from 1 to 240 specify multiples of 5 seconds, yielding timeouts from 5 seconds to 20 minutes.  Values from 241 to 251 specify from 1 to  11  units  of  30 minutes, yielding timeouts from 30 minutes to 5.5 hours.  A value of 252 signifies a timeout of 21 minutes. A value of 253 sets a vendor-defined timeout period between 8 and 12 hours, and the value 254  is reserved.  255 is interpreted as 21 minutes plus 15 seconds.  Note that some older drives may have very different interpretations of these values.
+
+- To update startup scripts
+	$ sudo nano /etc/rc.local (ubuntu 16 has new method for user customizations?)
+
+- To manually trim the filesystem on an SSD
+	$ sudo fstrim /
+
+- To resolve network issues with imported vm clones in VirtualBox
+	$ sudo nano /etc/udev/rules.d/70-persistent-net.rules
+	Comment out the existing rules, save and quit, and reboot. Ubuntu will then create new rules and you should be able to connect normally from your imported vm clone.
+
+- To change the hostname
+	$ sudo nano /etc/hostname
+	$ sudo nano /etc/hosts 
+
+- To create a virtual filesystem
+	Make the mount point
+	$ sudo mkdir /media/mntpnt
+	Make a virtual filesystem of 20 MB (default block size = 512 bytes, so block count = 20 * 1024 * 1024 / 512 = 40960)
+	$ sudo dd if=/dev/zero of=/directory/of/new/device count=40960
+	Check filesystem size
+	$ ls -lh /directory/of/new/device
+	Format the filesystem
+	$ sudo /sbin/mkfs -t ext2 -q /directory/of/new/device -F
+	Mount the filesystem
+	$ sudo mount /directory/of/new/device /media/mntpnt
+	Change filesystem permissions as needed
+
+- To change label for ext2, ext3 and ext4 filesystems
+	Note: 16 characters maximum
+	$ sudo e2label /dev/sdb3 catbug
+
+- To stop a headless VirtualBox virtual machine
+	$ vboxmanage controlvm <name> poweroff

@@ -1,0 +1,308 @@
+#!/bin/bash
+# ---------------------------------------------------------------------------
+# create-symlinks.sh - Script to sync multiple macs via Dropbox.
+
+# I keep a complex set of files in sync between my various computers. These
+# range from '~/Documents/' to application preferences from
+# '~/Library/Application Support/' to sundry other files in use around my
+# computer. The syncing script in this post automagically takes any number of
+# files in Dropbox and creates symlinks from them to the appropriate places on
+# my computer.
+
+# Nathaniel Landau <nate+site@natelandau.com>
+
+# Usage: create-symlinks.sh
+
+# Revision history:
+# 2015-01-01 Downloaded from http://natelandau.com/
+# ---------------------------------------------------------------------------
+
+###
+#
+# 1.    Configuration Variables
+# 2.    Symlink Dotfiles
+# 3.    Symlinks to Library/*
+# 4.    Symlinks to ~/Library/Application Support/*
+# 5.    Symlinks to ~/Library/Application Support/*/*
+# 6.    Symlinks to ~/
+#
+###
+
+#
+# 1.  Configuration Variables and Preamble
+#
+
+# Set Colors
+
+e_header() { printf "\n$(tput setaf 141)%s$(tput sgr0)\n" "$@"
+}
+e_success() { printf "$(tput setaf 64)✔ %s$(tput sgr0)\n" "$@"
+}
+e_error() { printf "$(tput setaf 1)✖ %s$(tput sgr0)\n" "$@"
+}
+e_warning() { printf "$(tput setaf 136)➜ %s$(tput sgr0)\n" "$@"
+}
+
+# Is Dropbox Installed?
+# If you have Dropbox installed in a nonstandard location, update it appropriately here.
+
+if [ ! -d ""$HOME"/Dropbox" ]; then
+  e_error "DROPBOX NOT FOUND"
+  e_error "Without Dropbox we will exit"
+  e_error "EXITING"
+  exit 1
+else
+
+  # Set Directory Locations
+  # dropbox_assets_dir: This is the location of your 'assets' directory
+  # backup_dir: This script will copy any existing files to a backup folder.  Place your desired path here.
+
+  dropbox_assets_dir="$HOME"/Dropbox/sharedConfiguration/assets
+  backup_dir="$HOME"/Desktop/Backups/$(date "+%Y-%m-%d-%H_%M")
+
+  sudo -v # ask for password only at the beginning
+
+  e_header "---------- BEGINNING CONFIG SCRIPT ----------"
+  e_header "Hang tight.......here we go....."
+
+  # 2.    Symlinks to ~/Dotfiles
+  #
+  #       Takes all files found in "$dropbox_assets_dir"/dotFiles/
+  #       and symlinks them to ~/
+
+  ASSETS="$dropbox_assets_dir"/dotFiles/*
+  SOURCE="$dropbox_assets_dir"/dotFiles/
+  DEST="$HOME"/
+
+  e_header "---------- Symlinking Dotfiles ----------"
+
+  shopt -s dotglob    #show dot files
+  if [ ! -d "$SOURCE" ]; then
+    e_error "Can't find source directory: $SOURCE"
+  else
+    for f in $ASSETS
+    do
+      if [ -L "$DEST"`basename "$f"` ]; then
+        e_success "Already Linked: "$DEST"`basename "$f"`"
+      else
+        e_warning "Linking : `basename "$f"`"
+        if [ -f "$DEST"`basename "$f"` ]; then
+          if [ ! -d "$backup_dir"/dotfiles ]; then
+            mkdir -p "$backup_dir"/dotfiles
+          fi
+          mv "$DEST"`basename "$f"` "$backup_dir"/dotfiles/`basename "$f"`
+          ln -s "$SOURCE"`basename "$f"` "$DEST"`basename "$f"`
+        else
+          ln -s "$SOURCE"`basename "$f"` "$DEST"`basename "$f"`
+        fi
+      fi
+    done
+  fi
+  source $HOME/.bash_profile
+  shopt -u dotglob    #reset dotglob
+  unset ASSETS
+  unset SOURCE
+  unset DEST
+
+  # 3.    Symlinks to ~Library/*
+  #
+  #       Takes all dirs found in "$dropbox_assets_dir"/Library/
+  #       and symlinks them to ~/Library/
+
+  e_header "---------- Symlinking into ~/Library ----------"
+
+  ASSETS="$dropbox_assets_dir"/Library/*
+  SOURCE="$dropbox_assets_dir"/Library/
+  DEST="$HOME"/Library/
+
+  # set IFS to allow spaces in names
+  SAVEIFS=$IFS
+  IFS=$(echo -en "\n\b")
+  if [ ! -d "$SOURCE" ]; then
+    e_error "Can't find source directory: $SOURCE"
+  else
+    if [ ! -d "$DEST" ]; then
+      mkdir -p "$DEST"
+    fi
+    for f in $ASSETS
+    do
+      if [ -L "$DEST"`basename "$f"` ]; then
+        e_success "Already Linked: "$DEST"`basename "$f"`"
+      else
+        e_warning "Linking : "$DEST"`basename "$f"`"
+        if [ -e "$DEST"`basename "$f"` ]; then
+          if [ ! -d "$backup_dir" ]; then
+            mkdir -p "$backup_dir"
+          fi
+          sudo mv "$DEST"`basename "$f"` "$backup_dir"/`basename "$f"`
+          ln -s "$SOURCE"`basename "$f"` "$DEST"`basename "$f"`
+        else
+          ln -s "$SOURCE"`basename "$f"` "$DEST"`basename "$f"`
+        fi
+      fi
+    done
+  fi
+  # restore $IFS
+  IFS=$SAVEIFS
+  unset ASSETS
+  unset SOURCE
+  unset DEST
+
+  # 4.    Symlinks to ~/Library/Application Support/*
+  #
+  #       This script takes all directories found in
+  #       "$dropbox_assets_dir"/ApplicationSupportBase/
+  #       and symlinks them to ~/Library/Application Support/
+
+  e_header "---------- Symlinking into ~/Library/Application Support/ ----------"
+
+  ASSETS="$dropbox_assets_dir"/ApplicationSupportBase/*
+  SOURCE="$dropbox_assets_dir"/ApplicationSupportBase/
+  DEST="$HOME"/Library/Application\ Support/
+
+  # set IFS to allow spaces in names
+  SAVEIFS=$IFS
+  IFS=$(echo -en "\n\b")
+  if [ ! -d "$SOURCE" ]; then
+    e_error "Can't find source directory: $SOURCE"
+  else
+    if [ ! -d "$DEST" ]; then
+      mkdir -p "$DEST"
+    fi
+    for f in $ASSETS
+    do
+      if [ -L "$DEST"`basename "$f"` ]; then
+        e_success "Already Linked: "$DEST"`basename "$f"`"
+      else
+        e_warning "Linking : "$DEST"`basename "$f"`"
+        if [ -e "$DEST"`basename "$f"` ]; then
+          if [ ! -d "$backup_dir" ]; then
+            mkdir -p "$backup_dir"
+          fi
+          mv "$DEST"`basename "$f"` "$backup_dir"/`basename "$f"`
+          ln -s "$SOURCE"`basename "$f"` "$DEST"`basename "$f"`
+        else
+          ln -s "$SOURCE"`basename "$f"` "$DEST"`basename "$f"`
+        fi
+      fi
+    done
+  fi
+  # restore $IFS
+  IFS=$SAVEIFS
+  unset ASSETS
+  unset SOURCE
+  unset DEST
+
+  # 5.    Symlinks to ~/Library/Application Support/*/*
+  #
+  #       This script takes all directories found in
+  #       "$dropbox_assets_dir"/ApplicationSupportComples/*/
+  #       and symlinks them to ~/Library/Application Support/*/
+  #       i.e - Goes one level deep for symlinks.
+
+  e_header "---------- Symlinking into ~/Library/Application Support/*/ ----------"
+
+  # set IFS to allow spaces in names
+  SAVEIFS=$IFS
+  IFS=$(echo -en "\n\b")
+
+  ASSETS="$dropbox_assets_dir"/ApplicationSupportComplex/*
+  SOURCE="$dropbox_assets_dir"/ApplicationSupportComplex/
+  DEST="$HOME"/Library/Application\ Support/
+
+  if [ ! -d "$SOURCE" ]; then
+    e_error "Can't find source directory: $SOURCE"
+  else
+    for f in $ASSETS
+    do
+      ASSETS2="$SOURCE"`basename "$f"`/*
+      SOURCE2="$SOURCE"`basename "$f"`/
+      DEST2="$DEST"`basename "$f"`/
+      BACKUP2="$backup_dir"/`basename "$f"`/
+      if [ ! -d "$DEST2" ]; then
+        mkdir -p "$DEST2"
+      fi
+      for g in $ASSETS2
+      do
+        if [ -L "$DEST2"`basename "$g"` ]; then
+          e_success "Already Linked: "$DEST2"`basename "$g"`"
+        else
+          e_warning "Linking : "$SOURCE2"`basename "$g"`"
+          if [ -e "$DEST2"`basename "$g"` ]; then
+            if [ ! -d "$BACKUP2" ]; then
+              mkdir -p "$BACKUP2"
+            fi
+            mv "$DEST2"`basename "$g"` "$BACKUP2"`basename "$g"`
+            ln -s "$SOURCE2"`basename "$g"` "$DEST2"`basename "$g"`
+          else
+            ln -s "$SOURCE2"`basename "$g"` "$DEST2"`basename "$g"`
+          fi
+        fi
+      done
+    done
+  fi
+  # restore $IFS
+  IFS=$SAVEIFS
+
+  unset ASSETS
+  unset SOURCE
+  unset DEST
+  unset ASSETS2
+  unset SOURCE2
+  unset DEST2
+  unset BACKUP2
+
+  # 6.    Symlinks to ~/
+  #
+  #       Creates symlinks to dirs at the base ~/ directory
+
+  e_header "---------- Symlinking into ~/  ----------"
+
+  ASSETS="$dropbox_assets_dir"/Home/*
+  SOURCE="$dropbox_assets_dir"/Home/
+  DEST="$HOME"/
+
+  # set IFS to allow spaces in names
+  SAVEIFS=$IFS
+  IFS=$(echo -en "\n\b")
+  if [ ! -d "$SOURCE" ]; then
+    e_error "Can't find source directory: $SOURCE"
+  else
+    if [ ! -d "$DEST" ]; then
+      mkdir -p "$DEST"
+    fi
+    for f in $ASSETS
+    do
+      if [ -L "$DEST"`basename "$f"` ]; then
+        e_success "Already Linked: "$DEST"`basename "$f"`"
+      else
+        e_warning "Linking : "$DEST"`basename "$f"`"
+        if [ -e "$DEST"`basename "$f"` ]; then
+          if [ ! -d "$backup_dir" ]; then
+            mkdir -p "$backup_dir"
+          fi
+          sudo mv "$DEST"`basename "$f"` "$backup_dir"/`basename "$f"`
+          ln -s "$SOURCE"`basename "$f"` "$DEST"`basename "$f"`
+        else
+          ln -s "$SOURCE"`basename "$f"` "$DEST"`basename "$f"`
+        fi
+      fi
+    done
+  fi
+  # restore $IFS
+  IFS=$SAVEIFS
+  unset ASSETS
+  unset SOURCE
+  unset DEST
+
+  #
+  # Notify if Backups were created of any files above
+  #
+  e_header "---------- Processing Backups  ----------"
+  if [ -e $backup_dir ]; then
+    e_warning "Backups moved to "$backup_dir""
+  else
+    e_success "No Backups Created"
+  fi
+  e_header "---------- YAY! ALL DONE  ----------"
+fi

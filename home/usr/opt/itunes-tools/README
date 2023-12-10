@@ -1,0 +1,122 @@
+Wrapper script for batch-transcode-video. Produces space-efficient, high-
+quality H265 videos that are compatible with iTunes. Reduces combined option
+scope of batch-transcode-video and transcode-video from 50 to 9.
+
+Big thanks to Don Melton for his work on transcode-video and transcoding
+best practices! Much of it is used here.
+
+HIGHLY recommend checking out his readme - the Bible on good transcoding:
+  https://github.com/donmelton/video_transcoding
+
+********************
+*     EXAMPLES     *
+********************
+
+Example 1: Transcoding a collection into iTunes-friendly videos.
+  $ itunes-transcode -i INDIR -o OUTDIR -I
+
+Example 2: Testing the output of your transcode settings, as quickly as
+possible.
+  $ itunes-transcode -i INDIR -o OUTDIR -I -l -c 1
+
+Example 3: Dry-run.
+  $ itunes-transcode -i INDIR -o OUTDIR -I -n
+
+**********************
+*     CHEATSHEET     *
+**********************
+
+Separate movies from TV shows or film festival DVDs (anything "episodic," which could cause episode "doubles" or "combined" MKVs)
+Sanitize data, stripping filenames of spaces and special characters (just to be safe)
+Rip any optical media to MKV.
+Look for forced subtitles and isolate them in their own track.
+Convert any lossless audio tracks to FLAC format.
+Convert any Blu-ray subtitle tracks to SRT format.
+Transcode to H265 MKV/MP4 files.
+Rename files using Plex naming conventions.
+Scrape for metadata.
+Download SRT subs or convert any DVD subtitles to SRT format (if no SRT present in source, useful for DVD or Blu-ray rips)
+
+*******************
+*     GOTCHAS     *
+*******************
+
+batch-transcode-video:
+  The node.js script, batch-transcode-video, currently has a bug where if
+  INDIR is set to the current working directory, the script will fail.
+  Setting INDIR to any directory other than the current working directory
+  fixes this.
+
+  In addition, when encoding to MP4 files instead of MKV, batch-transcode-
+  video will still display them as having been saved as MKV files - you can
+  ignore this, batch-transcode-video will save your files as MP4 if you tell
+  it to.
+
+Blu-ray Support:
+
+  It isn't quite here, yet. Technically, this script only deals with the
+  MKVs ripped from your Blu-ray media, which it will handle without
+  complaint. However, Blu-ray subs cannot be saved inside MP4 files without
+  breaking iTunes compatibility, so to preserve them, they would need to be
+  extracted separately... Honestly, they might break compatibility but I
+  don't know because I don't have any Blu-ray media to test with.
+
+TV Shows:
+  If you're ripping to MKVs straight from discs or disc images, DVDs and Blu
+  Ray media that feature episodic content can have two gotcha's.
+
+  First, their episodes may be listed under a single master title IN
+  ADDITION to per-episode titles, essentially double-listing the episodes.
+  In a fully-automated system, this means episodic content can take twice as
+  long to rip AND transcode. The recommendation here is to inspect the MKVs
+  after they are ripped, and delete episode "doubles" BEFORE you waste time
+  transcoding them (ripping in itself doesn't take that long).
+
+  Second, episodes may not be double-listed, but they may be listed in a
+  master title and separated only by chapter markers, meaning a DVD with 5
+  episodes on it would produce just a single MKV with all 5 episodes. One
+  MKV per episode is preferable. The workaround here is to use the -c option
+  to "separate" such MKVs, after inspecting the chapter ranges for each
+  episode in the "combined" MKV.
+
+  With the two above in mind, you can save a lot of time if you batch-
+  process TV shows and movies separately, from initial DVD-rip all the way
+  to downloading SRT subs.
+
+********************
+*     WISHLIST     *
+********************
+
+yeah actually just recommend the readme for transcode-video, then explain
+your custom additions here
+
+you should really have a companion recursively-renaming script that
+sanitizes filenames and folders (and reports such impending changes for
+review before the user commits to them, as well as an option to turn off
+this prompt) so they can be safely batch-operated on - if it can give you
+errors in case of write permission issues, maybe add it as a dependency of
+this and your other video-tools scripts?
+
+it'd be useful to summarize what requirements this wrapper script, plus the
+batch-transcode-video option string, are fulfilling (mostly reducing option
+scope so it can be easily picked up, 100%-scriptable solution,
+keep/transcode ALL contents of a DVD rip - including vobsubs - while
+outputing portable, quicktime-compatible h265 video)... if there's a way to
+automate the download of consistently GOOD srt subs (not crap), I haven't
+found a way to do it yet, so we don't discard the mastered subtitles that
+come w/ source media. Vobsubs can safely be stored in mp4 videos w/o
+breaking qt compatibility, but bluray subtitles are another story and may
+hopefully can be converted (another item - bluray support just isn't here
+yet)... then again bluray subs can probably just be ripped and saved
+separately and associated by VLC when the video is read, works for srt's and
+vobsubs. hmmm... well, for subs, there's always filebot, i guess. latest
+command line version for headless linux systems is now available under a new
+cross-platform license model as of July 1 2018, at $6 a year it's pretty
+good. the companion 'Automated Media Center' script from filebot's own
+script repo seems like a nice option, too.
+
+also, why does running the same command twice DELETE all the output files in
+error? PUT A CRITICAL WARNING IN THE HELP MESSAGE ABOUT USING THIS SCRIPT
+
+protect against --input process.cwd() bug by enforcing subfolder for
+--input, print warning about workaround

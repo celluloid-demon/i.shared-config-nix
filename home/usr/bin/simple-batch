@@ -1,0 +1,45 @@
+#!/bin/bash
+# ---------------------------------------------------------------------------
+# dummy - Dummy script for testing purposes.
+
+# Usage: dummy
+
+# Revision history:
+# 2015-02-22 Created
+# ---------------------------------------------------------------------------
+
+# Define functions
+main() {
+  greeting
+# do_thing
+# do_other_thing
+}
+
+greeting() {
+  echo "Hello."
+}
+
+do_thing() {
+  local files=*
+
+  for f in $files
+  do
+  	echo "Pooping $f..."
+  	folder=${f%.avi}
+  	mkdir -p "$folder"
+  done
+}
+
+do_other_thing() {
+  local files=*.avi
+
+  for f in $files
+  do
+  	echo "Pooping $f..."
+  	folder=${f%.avi}
+  	mv "$f" "$folder/" # FIX
+  done
+}
+
+# Main logic
+main

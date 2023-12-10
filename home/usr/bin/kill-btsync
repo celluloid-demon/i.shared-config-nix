@@ -1,0 +1,21 @@
+#!/bin/bash
+# ---------------------------------------------------------------------------
+# kill-btsync - Gracefully kills btsync process.
+
+# Usage: kill-btsync
+
+# Revision history:
+#   2015-09-11 Created by Jonathan Dudrey
+# ---------------------------------------------------------------------------
+
+# Define functions
+main() {
+  do_thing
+}
+
+do_thing() {
+  killall btsync
+}
+
+# Main logic
+main

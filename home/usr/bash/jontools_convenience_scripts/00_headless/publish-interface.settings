@@ -1,0 +1,20 @@
+#!/bin/bash
+
+# NO TABS!!! Only spaces.
+# publish-interfaces.sh will only set options for the first interface listed.
+
+# Interface
+iface enp0s3 inet static
+
+# Your desired static IP address.
+address 192.168.1.100
+
+# If you don't know what this is, leave it alone.
+netmask 255.255.255.0
+
+# This will usually end up being your router's IP address, but your router
+# could report something different, so it's a good idea to check.
+gateway 192.168.1.254
+
+# Fuck AT&T.
+dns-nameservers 8.8.8.8 8.8.4.4

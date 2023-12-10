@@ -1,0 +1,41 @@
+#!/bin/bash
+
+# Usage:
+# $ batch-sanitize-filenames [indir]
+
+# Exit for any non-zero exit code
+set -e
+
+# Library location
+LIB="$HOME/usr/lib"
+
+# Source library files
+source "$LIB/sanitize_filename.sh"
+
+# Declare constants
+INDIR="${1:-$(pwd)}"
+USAGE_MSG="Usage: $ batch-sanitize-filenames [indir]"
+
+# Main logic
+main() {
+
+  check_directory_valid "$INDIR"
+  batch_sanitize_filenames "$INDIR"
+
+}
+
+# Ensure $indir is a directory
+check_directory_valid() {
+
+  if [ ! -d "$1" ]; then
+
+    echo "Directory argument is missing / invalid. Please provide a valid directory path."
+    echo "$USAGE_MSG"
+    exit 1
+
+  fi
+
+}
+
+# Call the main logic
+main

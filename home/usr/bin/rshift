@@ -1,0 +1,26 @@
+#!/bin/bash
+# ---------------------------------------------------------------------------
+# rshift - Make time-shifted recordings of radio streams.
+
+# Usage: rshift
+
+# Revision history:
+# 2015-04-21 Created by Jonathan Dudrey
+# ---------------------------------------------------------------------------
+
+# Define functions
+main() {
+  # local dir="$HOME/BTSync/common.phone/"
+  local dir="$HOME/Desktop/"
+  local url="http://lpm.streamguys.tv:80/lpm128-3"
+  local out="$(basename "$url")1.mp3"
+
+  download
+}
+
+download() {
+  curl "$url" -o "$dir/$out"
+}
+
+# Main logic
+main

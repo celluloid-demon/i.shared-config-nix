@@ -1,0 +1,4 @@
+#!/bin/bash
+
+export PATH="$HOME/usr/opt/itunes-tools/bin:$PATH"
+bash
