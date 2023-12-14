@@ -1,0 +1,7 @@
+# tree
+alias t='tree -L 1'
+alias tt='tree -L 2'
+alias ttt='tree -L 3'
+alias tttt='tree -L 4'
+alias ttttt='tree -L 5'
+alias T='tree'
