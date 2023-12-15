@@ -1,0 +1,7 @@
+#!/bin/bash
+
+gtg_gui_dir="$HOME/.local/git/gtg-gui/"
+
+cd "$gtg_gui_dir"
+
+./up.sh
