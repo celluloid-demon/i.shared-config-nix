@@ -1,0 +1,16 @@
+#!/bin/bash
+
+# Check if two positional parameters are provided
+if [ "$#" -ne 2 ]; then
+    echo "Usage: $0 <min> <max>"
+    exit 1
+fi
+
+# Extract min and max values from positional parameters
+min="$1"
+max="$2"
+
+# Generate a random number between min and max (inclusive)
+random_number=$((RANDOM % (max - min + 1) + min))
+
+echo "$random_number"
