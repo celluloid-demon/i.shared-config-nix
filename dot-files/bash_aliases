@@ -1,3 +1,6 @@
+# docker / podman
+alias docker='podman'
+
 # ssh
 alias rp='ssh raspberrypi'
 
