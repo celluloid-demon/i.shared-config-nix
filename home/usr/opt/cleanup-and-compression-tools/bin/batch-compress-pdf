@@ -57,15 +57,6 @@ USAGE_MSG="Usage: $ batch-compress-pdf <indir>"
 # -dPDFSETTINGS=/printer  # selects output similar to the Acrobat Distiller "Print Optimized" setting
 # -dPDFSETTINGS=/default
 
-# Main logic
-main() {
-
-	check_ghostscript_installed
-	check_directory_valid "$INDIR"
-	batch_compress_pdf "$INDIR"
-
-}
-
 batch_compress_pdf() {
 
 	# Create the output directory if it doesn't exist
@@ -83,6 +74,10 @@ batch_compress_pdf() {
 
 	done
 	# <---------- END OLD CODE ---------->
+
+}
+
+batch_compress_pdf_new() {
 
 	# Iterate over all files (AND folders) in the given directory (recursively)
 	for _item in "$_indir"/*; do
@@ -145,5 +140,14 @@ check_ghostscript_installed() {
 
 }
 
+# Main logic
+main() {
+
+	check_ghostscript_installed
+	check_directory_valid "$INDIR"
+	batch_compress_pdf "$INDIR"
+
+}
+
 # Call the main logic
-main "$@"
+main

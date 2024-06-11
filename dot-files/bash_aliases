@@ -2,7 +2,7 @@
 alias docker='podman'
 
 # ssh
-alias rp='ssh raspberrypi'
+alias rp='ssh raspberry-pi'
 
 # tree
 alias t='tree -L 1'
