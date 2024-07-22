@@ -2,7 +2,7 @@
 #alias docker='podman'
 
 # git
-alias ss='${HOME}/usr/bin/push'
+alias gg='${HOME}/usr/bin/push'
 
 # ssh
 alias rp='ssh raspberry-pi'
