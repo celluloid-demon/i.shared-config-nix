@@ -1,5 +1,8 @@
 # docker / podman
-alias docker='podman'
+#alias docker='podman'
+
+# git
+alias ss='${HOME}/usr/bin/push'
 
 # ssh
 alias rp='ssh raspberry-pi'
