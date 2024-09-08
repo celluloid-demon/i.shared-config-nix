@@ -1,0 +1,12 @@
+#!/bin/bash
+
+# Helper script to generate two wallpapers (one HD, one HD minus 32-pixels) from an image.
+
+# Grab basename for image.
+file_basename="$(basename "$1")"
+
+# Generate one full-sized hd image.
+magick "$1" -gravity Center -crop 16:9 -resize 1920x1080 "${file_basename}_full.jpg"
+
+# Generate one hd image with 32 pixels removed from the bottom.
+magick "${file_basename}_full.jpg" -gravity South -chop 0x32 "${file_basename}_m32.jpg"
