@@ -4,6 +4,9 @@
 # git
 alias gg='${HOME}/usr/bin/push'
 
+# mpv (windows)
+alias mpvnet='/mnt/c/Users/Jonathan/AppData/Local/Programs/mpv.net/mpvnet.exe'
+
 # ssh
 alias rp='ssh raspberry-pi'
 
